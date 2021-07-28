@@ -419,12 +419,12 @@ def VT_full_resnet_generator_smooth_disentangle(IMG_SIZE):
 
     # Redução até vecsize
     if IMG_SIZE == 256:
-        x = tf.keras.Dense(units = 3072, kernel_initializer = initializer)(x) #2048 + 512
-        x = tf.keras.Dense(units = 2048, kernel_initializer = initializer)(x)
-        x = tf.keras.Dense(units = 1024, kernel_initializer = initializer)(x)
+        x = tf.keras.layers.Dense(units = 3072, kernel_initializer = initializer)(x) #2048 + 512
+        x = tf.keras.layers.Dense(units = 2048, kernel_initializer = initializer)(x)
+        x = tf.keras.layers.Dense(units = 1024, kernel_initializer = initializer)(x)
 
     elif IMG_SIZE == 128:
-        x = tf.keras.Dense(units = 768, kernel_initializer = initializer)(x) #512 + 256
+        x = tf.keras.layers.Dense(units = 768, kernel_initializer = initializer)(x) #512 + 256
 
     x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
     x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
@@ -673,12 +673,12 @@ def VT_simple_decoder_smooth_disentangle(IMG_SIZE):
 
     # Redução até vecsize
     if IMG_SIZE == 256:
-        x = tf.keras.Dense(units = 3072, kernel_initializer = initializer)(x) #2048 + 512
-        x = tf.keras.Dense(units = 2048, kernel_initializer = initializer)(x)
-        x = tf.keras.Dense(units = 1024, kernel_initializer = initializer)(x)
+        x = tf.keras.layers.Dense(units = 3072, kernel_initializer = initializer)(x) #2048 + 512
+        x = tf.keras.layers.Dense(units = 2048, kernel_initializer = initializer)(x)
+        x = tf.keras.layers.Dense(units = 1024, kernel_initializer = initializer)(x)
 
     elif IMG_SIZE == 128:
-        x = tf.keras.Dense(units = 768, kernel_initializer = initializer)(x) #512 + 256
+        x = tf.keras.layers.Dense(units = 768, kernel_initializer = initializer)(x) #512 + 256
 
     x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
     x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)

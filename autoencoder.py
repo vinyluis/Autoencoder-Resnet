@@ -47,11 +47,10 @@ config.LEARNING_RATE = 1e-5
 
 config.QUIET_PLOT = True
 
+# config.FIRST_EPOCH = 1 # Definido em código, no checkpoint
 config.EPOCHS = 3
-config.FIRST_EPOCH = 1
 config.CHECKPOINT_EPOCHS = 1
 config.LOAD_CHECKPOINT = True
-config.FIRST_EPOCH = 1
 config.NUM_TEST_PRINTS = 10
 config.KEEP_CHECKPOINTS = 2
 config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
@@ -60,11 +59,11 @@ config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
 #%% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp = "11F"
+config.exp = "12A"
 
 # Modelo do gerador. Possíveis = 'resnet', 'resnet_vetor', 'encoder_decoder', 'full_resnet', 'simple_decoder', 
 # 'full_resnet_dis', 'simple_decoder_dis', 'full_resnet_smooth', 'simple_decoder_smooth'
-config.gen_model = 'simple_decoder_dis'
+config.gen_model = 'full_resnet_smooth'
 
 # Modelo do discriminador. Possíveis = 'patchgan', 'stylegan_adapted', 'stylegan'
 config.disc_model = 'patchgan'
@@ -99,7 +98,7 @@ if not(config.IMG_SIZE == 256 or config.IMG_SIZE == 128):
 #%% Prepara as pastas
 
 # base_root = "../"
-base_root = "C:/Users/T-Gamer/OneDrive/Vinicius/01-Estudos/6_GANs/Autoencoder-Resnet"
+base_root = ""
 
 ### Prepara o nome da pasta que vai salvar o resultado dos experimentos
 experiment_root = base_root + 'Experimentos/'
@@ -366,11 +365,11 @@ def fit(generator, disc, train_ds, first_epoch, epochs, test_ds):
         t1 = time.time()
         
         for example_input in test_ds.take(1):
-            filename = "epoch_" + str(epoch).zfill(len(str(config.EPOCHS))) + ".jpg"
+            filename = "epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
             fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
 
             # Loga a figura no wandb
-            s = "epoch {}".format(epoch -1)
+            s = "epoch {}".format(epoch-1)
             wandbfig = wandb.Image(fig, caption="Epoch:{}".format(epoch-1))
             wandb.log({s: wandbfig})
 
