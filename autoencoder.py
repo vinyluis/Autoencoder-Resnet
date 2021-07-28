@@ -1,3 +1,5 @@
+#%% INÍCIO
+
 ### Imports
 import os
 import time
@@ -16,9 +18,9 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'  # Silencia o TF (https://stackoverflow
 import tensorflow as tf
 
 # Evita o erro "Failed to get convolution algorithm. This is probably because cuDNN failed to initialize"
-config = tf.compat.v1.ConfigProto()
-config.gpu_options.allow_growth = True
-session = tf.compat.v1.InteractiveSession(config=config)
+tfconfig = tf.compat.v1.ConfigProto()
+tfconfig.gpu_options.allow_growth = True
+session = tf.compat.v1.InteractiveSession(config=tfconfig)
 
 # Verifica se a GPU está disponível:
 print(tf.config.list_physical_devices('GPU'))
@@ -26,65 +28,90 @@ print(tf.config.list_physical_devices('GPU'))
 sess = tf.compat.v1.Session(config=tf.compat.v1.ConfigProto(log_device_placement=True))
 print(sess)
 
-#%% HIPERPARÂMETROS
-LAMBDA = 100
-BATCH_SIZE = 1
-BUFFER_SIZE = 150
-IMG_SIZE = 256
+#%% Weights & Biases
 
-EPOCHS = 3
-CHECKPOINT_EPOCHS = 1
-LOAD_CHECKPOINT = True
-FIRST_EPOCH = 1
-NUM_TEST_PRINTS = 10
-KEEP_CHECKPOINTS = 2
-LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
-# WGAN_NCRITIC = 1 # A StyleGAN treina o Discriminador e o Gerador na mesma proporção (Ncritic = 1)
+import wandb
+from wandb.keras import WandbCallback
+# wandb.init(project='autoencoder_resnet', entity='vinyluis', mode="disabled")
+wandb.init(project='autoencoder_resnet', entity='vinyluis', mode="online")
+
+
+#%% HIPERPARÂMETROS
+config = wandb.config # Salva os hiperparametros no Weights & Biases também
+config.LAMBDA = 100 # Efeito da Loss L1
+config.BATCH_SIZE = 1
+config.BUFFER_SIZE = 150
+config.IMG_SIZE = 128
+config.LEARNING_RATE = 1e-5
+# config.ADAM_BETA_1 = 0.5 #0.5 para a PatchGAN e 0.9 para a WGAN - Definido no código
+
+config.QUIET_PLOT = True
+
+config.EPOCHS = 3
+config.FIRST_EPOCH = 1
+config.CHECKPOINT_EPOCHS = 1
+config.LOAD_CHECKPOINT = True
+config.FIRST_EPOCH = 1
+config.NUM_TEST_PRINTS = 10
+config.KEEP_CHECKPOINTS = 2
+config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
+# config.WGAN_NCRITIC = 1 # A StyleGAN treina o Discriminador e o Gerador na mesma proporção (Ncritic = 1)
 
 #%% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-exp = "11A"
+config.exp = "11F"
 
-# Modelo do gerador. Possíveis = 'resnet', 'resnet_vetor', 'encoder_decoder', 'full_resnet', 'simple_decoder', 'full_resnet_dis', 'simple_decoder_dis'
-gen_model = 'resnet'
+# Modelo do gerador. Possíveis = 'resnet', 'resnet_vetor', 'encoder_decoder', 'full_resnet', 'simple_decoder', 
+# 'full_resnet_dis', 'simple_decoder_dis', 'full_resnet_smooth', 'simple_decoder_smooth'
+config.gen_model = 'simple_decoder_dis'
 
-# Modelo do discriminador. Possíveis = 'patchgan', 'patchgan_adapted', 'stylegan_adapted', 'stylegan'
-disc_model = 'stylegan'
+# Modelo do discriminador. Possíveis = 'patchgan', 'stylegan_adapted', 'stylegan'
+config.disc_model = 'patchgan'
 
 # Tipo de loss. Possíveis = 'patchganloss', 'wgan', 'wgan-gp'
-loss_type = 'wgan'
+config.loss_type = 'patchganloss'
 
 # Acerta o flag USE_FULL_GENERATOR que indica se o gerador é único (full) ou partido (encoder + decoder)
-if gen_model == 'encoder_decoder':
-    USE_FULL_GENERATOR = False
+if config.gen_model == 'encoder_decoder':
+    config.USE_FULL_GENERATOR = False
 else:
-    USE_FULL_GENERATOR = True
+    config.USE_FULL_GENERATOR = True
     
 # Valida se pode ser usado o tipo de loss com o tipo de discriminador
-if loss_type == 'patchganloss':
-    if not(disc_model == 'patchgan' or disc_model == 'patchgan_adapted' or  disc_model == 'stylegan_adapted'):
-        raise utils.LossCompatibilityError(loss_type, disc_model)
-if loss_type == 'wgan' or loss_type == 'wgan-gp':
-    if not(disc_model == 'stylegan'):
-        raise utils.LossCompatibilityError(loss_type, disc_model)
+if config.loss_type == 'patchganloss':
+    config.ADAM_BETA_1 = 0.5
+    #config.LEARNING_RATE = 1e-4
+    if not(config.disc_model == 'patchgan' or config.disc_model == 'patchgan_adapted'
+            or  config.disc_model == 'stylegan_adapted'):
+        raise utils.LossCompatibilityError(config.loss_type, config.disc_model)
+if config.loss_type == 'wgan' or config.loss_type == 'wgan-gp':
+    config.ADAM_BETA_1 = 0.9
+    #config.LEARNING_RATE = 1e-5
+    if not(config.disc_model == 'stylegan'):
+        raise utils.LossCompatibilityError(config.loss_type, config.disc_model)
+
+# Valida o IMG_SIZE
+if not(config.IMG_SIZE == 256 or config.IMG_SIZE == 128):
+    raise utils.sizeCompatibilityError(config.IMG_SIZE)
 
 
 #%% Prepara as pastas
 
-base_root = "../"
+# base_root = "../"
+base_root = "C:/Users/T-Gamer/OneDrive/Vinicius/01-Estudos/6_GANs/Autoencoder-Resnet"
 
 ### Prepara o nome da pasta que vai salvar o resultado dos experimentos
 experiment_root = base_root + 'Experimentos/'
-experiment_folder = experiment_root + 'EXP' + exp + '_'
+experiment_folder = experiment_root + 'EXP' + config.exp + '_'
 experiment_folder += 'gen_'
-experiment_folder += gen_model
+experiment_folder += config.gen_model
 experiment_folder += '_disc_'
-experiment_folder += disc_model
+experiment_folder += config.disc_model
 #experiment_folder += '_loss_'
 #experiment_folder += loss_type
-if BATCH_SIZE != 1:
-    experiment_folder += '_BATCH_' + str(BATCH_SIZE)
+if config.BATCH_SIZE != 1:
+    experiment_folder += '_BATCH_' + str(config.BATCH_SIZE)
 experiment_folder += '/'
 
 ### Pastas do dataset
@@ -121,7 +148,6 @@ if not os.path.exists(model_folder):
 checkpoint_dir = experiment_folder + 'checkpoints'
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
 
-
 #%% FUNÇÕES DE APOIO
 
 def load(image_file):
@@ -135,7 +161,7 @@ def resize(input_image, height, width):
     return input_image
 
 def random_crop(input_image):
-    cropped_image = tf.image.random_crop(value = input_image, size = [IMG_SIZE, IMG_SIZE, 3])
+    cropped_image = tf.image.random_crop(value = input_image, size = [config.IMG_SIZE, config.IMG_SIZE, 3])
     return cropped_image
 
 # normalizing the images to [-1, 1]
@@ -147,9 +173,12 @@ def normalize(input_image):
 @tf.function()
 def random_jitter(input_image):
     # resizing to 286 x 286 x 3
-    input_image = resize(input_image, 286, 286)
+    if config.IMG_SIZE == 256:
+        input_image = resize(input_image, 286, 286)
+    elif config.IMG_SIZE == 128:
+        input_image = resize(input_image, 142, 142)
     
-    # randomly cropping to 256 x 256 x 3
+    # randomly cropping to IMGSIZE x IMGSIZE x 3
     input_image = random_crop(input_image)
     
     if tf.random.uniform(()) > 0.5:
@@ -166,7 +195,7 @@ def load_image_train(image_file):
 
 def load_image_test(image_file):
     input_image = load(image_file)    
-    input_image = resize(input_image, IMG_SIZE, IMG_SIZE)
+    input_image = resize(input_image, config.IMG_SIZE, config.IMG_SIZE)
     input_image = normalize(input_image)
     return input_image
 
@@ -185,17 +214,16 @@ def loss_patchgan_generator(disc_generated_output, gen_output, target):
     BCE = tf.keras.losses.BinaryCrossentropy(from_logits=True)
     gan_loss = BCE(tf.ones_like(disc_generated_output), disc_generated_output)
     l1_loss = tf.reduce_mean(tf.abs(target - gen_output)) # mean absolute error
-    total_gen_loss = gan_loss + (LAMBDA * l1_loss)
+    total_gen_loss = gan_loss + (config.LAMBDA * l1_loss)
     return total_gen_loss, gan_loss, l1_loss
 
 def loss_patchgan_discriminator(disc_real_output, disc_generated_output):
     # Ld = RealLoss + FakeLoss
     BCE = tf.keras.losses.BinaryCrossentropy(from_logits=True)
     real_loss = BCE(tf.ones_like(disc_real_output), disc_real_output)
-    generated_loss = BCE(tf.zeros_like(disc_generated_output), disc_generated_output)
-    total_disc_loss = real_loss + generated_loss
-    return total_disc_loss
-
+    fake_loss = BCE(tf.zeros_like(disc_generated_output), disc_generated_output)
+    total_disc_loss = real_loss + fake_loss
+    return total_disc_loss, real_loss, fake_loss
 
 '''
 Wasserstein GAN (WGAN): A PatchGAN e as GANs clássicas usam a BCE como medida de distância entre a distribuição real e a inferida pelo gerador,
@@ -211,14 +239,15 @@ def loss_wgan_generator(disc_generated_output, gen_output, target):
     # O output do discriminador é de tamanho BATCH_SIZE x 1, o valor esperado é a média
     gan_loss = -tf.reduce_mean(disc_generated_output)
     l1_loss = tf.reduce_mean(tf.abs(target - gen_output))
-    loss_g = gan_loss + (LAMBDA * l1_loss)
-    return loss_g
+    total_gen_loss = gan_loss + (config.LAMBDA * l1_loss)
+    return total_gen_loss, gan_loss, l1_loss
 
 def loss_wgan_discriminator(disc_real_output, disc_generated_output):
     # Maximizar E(D(x_real)) - E(D(x_fake)) é equivalente a minimizar -(E(D(x_real)) - E(D(x_fake))) ou E(D(x_fake)) -E(D(x_real))
-    loss_d = tf.reduce_mean(disc_generated_output) - tf.reduce_mean(disc_real_output)
-    return loss_d
-
+    fake_loss = tf.reduce_mean(disc_generated_output)
+    real_loss = tf.reduce_mean(disc_real_output)
+    total_disc_loss = fake_loss - real_loss
+    return total_disc_loss, real_loss, fake_loss
 
 '''
 Wasserstein GAN - Gradient Penalty (WGAN-GP): A WGAN tem uma forma muito bruta de assegurar a continuidade de Lipschitz, então
@@ -230,10 +259,10 @@ def loss_wgangp_generator(disc_generated_output, gen_output, target):
     return loss_wgan_generator(disc_generated_output, gen_output, target)
 
 def loss_wgangp_discriminator(disc, disc_real_output, disc_generated_output, real_img, generated_img, target):
-    loss_wgan = loss_wgan_discriminator(disc_real_output, disc_generated_output)
+    total_disc_loss, real_loss, fake_loss = loss_wgan_discriminator(disc_real_output, disc_generated_output)
     gp = gradient_penalty_conditional(disc, real_img, generated_img, target)
-    loss_d = loss_wgan + LAMBDA_GP * gp
-    return loss_d
+    total_disc_loss = total_disc_loss + config.LAMBDA_GP * gp
+    return total_disc_loss, real_loss, fake_loss
 
 def gradient_penalty(disc, real_img, generated_img):
     """ 
@@ -242,7 +271,7 @@ def gradient_penalty(disc, real_img, generated_img):
     From: https://colab.research.google.com/github/keras-team/keras-io/blob/master/examples/generative/ipynb/wgan_gp.ipynb#scrollTo=LhzOUkhYSOPG
     """
     # Get the interpolated image
-    alpha = tf.random.normal([BATCH_SIZE, 1, 1, 1], 0.0, 1.0)
+    alpha = tf.random.normal([config.BATCH_SIZE, 1, 1, 1], 0.0, 1.0)
     diff = generated_img - real_img
     interpolated = real_img + alpha * diff
 
@@ -266,7 +295,7 @@ def gradient_penalty_conditional(disc, real_img, generated_img, target):
     From: https://colab.research.google.com/github/keras-team/keras-io/blob/master/examples/generative/ipynb/wgan_gp.ipynb#scrollTo=LhzOUkhYSOPG
     """
     # Get the interpolated image
-    alpha = tf.random.normal([BATCH_SIZE, 1, 1, 1], 0.0, 1.0)
+    alpha = tf.random.normal([config.BATCH_SIZE, 1, 1, 1], 0.0, 1.0)
     diff = generated_img - real_img
     interpolated = real_img + alpha * diff
     
@@ -286,33 +315,45 @@ def gradient_penalty_conditional(disc, real_img, generated_img, target):
 #%% FUNÇÕES DO TREINAMENTO
 
 '''
-PATCHGAN - GERADOR ÚNICO
+FUNÇÕES DE TREINAMENTO PARA GERADOR ÚNICO
 '''
-
-# Função para o gerador
 @tf.function
-def train_step_patchgan(generator, disc, input_image, target, epoch):
+def train_step(generator, disc, input_image, target):
     with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
         
         gen_image = generator(input_image, training = True)
         
         disc_real = disc([input_image, target], training=True)
-        disc_gen = disc([input_image, gen_image], training=True)
-          
-        gen_total_loss, gen_gan_loss, gen_l1_loss = loss_patchgan_generator(disc_gen, gen_image, target)
-        disc_loss = loss_patchgan_discriminator(disc_real, disc_gen)
+        disc_gen = disc([gen_image, target], training=True)
+
+        if config.loss_type == 'patchganloss':
+            gen_loss, gen_gan_loss, gen_l1_loss = loss_patchgan_generator(disc_gen, gen_image, target)
+            disc_loss, disc_real_loss, disc_fake_loss = loss_patchgan_discriminator(disc_real, disc_gen)
     
-    generator_gradients = gen_tape.gradient(gen_total_loss, generator.trainable_variables)
+        elif config.loss_type == 'wgan':
+            gen_loss, gen_gan_loss, gen_l1_loss = loss_wgan_generator(disc_gen, gen_image, target)
+            disc_loss, disc_real_loss, disc_fake_loss = loss_wgan_discriminator(disc_real, disc_gen)
+
+        elif config.loss_type == 'wgan-gp':
+            gen_loss, gen_gan_loss, gen_l1_loss = loss_wgangp_generator(disc_gen, gen_image, target)
+            disc_loss, disc_real_loss, disc_fake_loss = loss_wgangp_discriminator(disc, disc_real, disc_gen, input_image, gen_image, target)
+
+        # Incluído o else para não dar erro 'gen_loss' is used before assignment
+        else:
+            gen_loss = 0
+            disc_loss = 0
+            print("Erro de modelo. Selecione uma Loss válida")
+
+    generator_gradients = gen_tape.gradient(gen_loss, generator.trainable_variables)
     discriminator_gradients = disc_tape.gradient(disc_loss, disc.trainable_variables)
     
     generator_optimizer.apply_gradients(zip(generator_gradients, generator.trainable_variables))
     discriminator_optimizer.apply_gradients(zip(discriminator_gradients, disc.trainable_variables))
     
-    return (gen_total_loss, disc_loss)
+    return (gen_loss, disc_loss, gen_gan_loss, gen_l1_loss, disc_real_loss, disc_fake_loss)
 
-    
 # Função para o gerador
-def fit_patchgan(generator, disc, train_ds, first_epoch, epochs, test_ds):
+def fit(generator, disc, train_ds, first_epoch, epochs, test_ds):
     
     # Lê arquivo com as losses
     try: 
@@ -325,49 +366,61 @@ def fit_patchgan(generator, disc, train_ds, first_epoch, epochs, test_ds):
         t1 = time.time()
         
         for example_input in test_ds.take(1):
-            filename = "epoch_" + str(epoch).zfill(len(str(EPOCHS))) + ".jpg"
-            utils.generate_save_images_gen(generator, example_input, result_folder, filename)
+            filename = "epoch_" + str(epoch).zfill(len(str(config.EPOCHS))) + ".jpg"
+            fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
+
+            # Loga a figura no wandb
+            s = "epoch {}".format(epoch -1)
+            wandbfig = wandb.Image(fig, caption="Epoch:{}".format(epoch-1))
+            wandb.log({s: wandbfig})
+
+            if config.QUIET_PLOT:
+                plt.close(fig)
         print("Epoch: ", epoch)
         
         # Train
         for n, input_image in train_ds.enumerate():
             
             target = input_image
-            gen_loss, disc_loss = train_step_patchgan(generator, disc, input_image, target, epoch)
-            
+            gen_loss, disc_loss, gen_gan_loss, gen_l1_loss, disc_real_loss, disc_fake_loss = train_step(generator, disc, input_image, target)
+
             # Acrescenta a loss no arquivo
             loss_df = loss_df.append({"Loss G": gen_loss.numpy(), "Loss D" : disc_loss.numpy()}, ignore_index = True)
-            
+            # Log a loss no wandb 
+            wandb.log({ 'gen_loss': gen_loss.numpy(), 'gen_gan_loss': gen_gan_loss.numpy(), 'gen_l1_loss': gen_l1_loss.numpy(),
+                        'disc_loss': disc_loss.numpy(), 'disc_real_loss': disc_real_loss.numpy(), 'disc_fake_loss': disc_fake_loss.numpy() })
+
             # Printa pontinhos a cada 100. A cada 100 pontinhos, pula a linha
             if (n+1) % 100 == 0:
                 print('.', end='')
-                # utils.plot_losses(loss_df)
                 if (n+1) % (100*100) == 0:
                     print()      
             
         # saving (checkpoint) the model every 20 epochs
-        if (epoch) % CHECKPOINT_EPOCHS == 0:
+        if (epoch) % config.CHECKPOINT_EPOCHS == 0:
             checkpoint.save(file_prefix = checkpoint_prefix)
             print("\nSalvando checkpoint...")
             
         # salva o arquivo de losses a cada época e plota como está ficando
         loss_df.to_csv(experiment_folder + "losses.csv")
-        utils.plot_losses(loss_df)
+        if not config.QUIET_PLOT:
+            utils.plot_losses(loss_df)
         
         dt = time.time() - t1
         print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
+        wandb.log({'epoch time (s)': dt, 'epoch time (min)': dt/60})
         
     dt = time.time() - t0
     print ('Tempo usado para {} épocas foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))  
-    
+   
 
 '''
-PATCHGAN - GERADOR SEPARADO EM ENCODER / DECODER
+GERADOR SEPARADO EM ENCODER / DECODER
 '''
     
 # Função para o encoder/decoder
 @tf.function
-def train_step_patchgan_encdec(encoder, decoder, disc, input_image, target, epoch):
+def train_step_encdec(encoder, decoder, disc, input_image, target):
     with tf.GradientTape() as enc_tape, tf.GradientTape() as dec_tape, tf.GradientTape() as disc_tape:
         
         latent = encoder(input_image, training = True)
@@ -375,22 +428,37 @@ def train_step_patchgan_encdec(encoder, decoder, disc, input_image, target, epoc
         
         disc_real = disc([input_image, target], training=True)
         disc_gen = disc([input_image, gen_image], training=True)
-          
-        gen_total_loss, gen_gan_loss, gen_l1_loss = loss_patchgan_generator(disc_gen, gen_image, target)
-        disc_loss = loss_patchgan_discriminator(disc_real, disc_gen)
+
+        if config.loss_type == 'patchganloss':
+            gen_loss, gen_gan_loss, gen_l1_loss = loss_patchgan_generator(disc_gen, gen_image, target)
+            disc_loss, disc_real_loss, disc_fake_loss = loss_patchgan_discriminator(disc_real, disc_gen)
     
-    encoder_gradients = enc_tape.gradient(gen_total_loss, encoder.trainable_variables)
-    decoder_gradients = dec_tape.gradient(gen_total_loss, decoder.trainable_variables)
+        elif config.loss_type == 'wgan':
+            gen_loss, gen_gan_loss, gen_l1_loss = loss_wgan_generator(disc_gen, gen_image, target)
+            disc_loss, disc_real_loss, disc_fake_loss = loss_wgan_discriminator(disc_real, disc_gen)
+
+        elif config.loss_type == 'wgan-gp':
+            gen_loss, gen_gan_loss, gen_l1_loss = loss_wgangp_generator(disc_gen, gen_image, target)
+            disc_loss, disc_real_loss, disc_fake_loss = loss_wgangp_discriminator(disc, disc_real, disc_gen, input_image, gen_image, target)
+    
+        # Incluído o else para não dar erro 'gen_loss' is used before assignment
+        else:
+            gen_loss = 0
+            disc_loss = 0
+            print("Erro de modelo. Selecione uma Loss válida")
+
+    encoder_gradients = enc_tape.gradient(gen_loss, encoder.trainable_variables)
+    decoder_gradients = dec_tape.gradient(gen_loss, decoder.trainable_variables)
     discriminator_gradients = disc_tape.gradient(disc_loss, disc.trainable_variables)
     
     encoder_optimizer.apply_gradients(zip(encoder_gradients, encoder.trainable_variables))
     decoder_optimizer.apply_gradients(zip(decoder_gradients, decoder.trainable_variables))
     discriminator_optimizer.apply_gradients(zip(discriminator_gradients, disc.trainable_variables))
     
-    return (gen_total_loss, disc_loss)
+    return (gen_loss, disc_loss, gen_gan_loss, gen_l1_loss, disc_real_loss, disc_fake_loss)
 
 # Função para o encoder/decoder
-def fit_patchgan_encdec(encoder, decoder, disc, train_ds, first_epoch, epochs, test_ds):
+def fit_encdec(encoder, decoder, disc, train_ds, first_epoch, epochs, test_ds):
     
     # Lê arquivo com as losses
     try: 
@@ -404,18 +472,29 @@ def fit_patchgan_encdec(encoder, decoder, disc, train_ds, first_epoch, epochs, t
         t1 = time.time()
         
         for example_input in test_ds.take(1):
-            filename = "epoch_" + str(epoch).zfill(len(str(EPOCHS))) + ".jpg"
-            utils.generate_save_images(encoder, decoder, example_input, result_folder, filename)
+            filename = "epoch_" + str(epoch).zfill(len(str(config.EPOCHS))) + ".jpg"
+            fig = utils.generate_save_images(encoder, decoder, example_input, result_folder, filename)
+
+            # Loga a figura no wandb
+            s = "epoch {}".format(epoch -1)
+            wandbfig = wandb.Image(fig, caption="Epoch:{}".format(epoch-1))
+            wandb.log({s: wandbfig})
+
+            if config.QUIET_PLOT:
+                plt.close(fig)
         print("Epoch: ", epoch)
         
         # Train
         for n, input_image in train_ds.enumerate():
             
             target = input_image
-            gen_loss, disc_loss = train_step_patchgan_encdec(encoder, decoder, disc, input_image, target, epoch)
+            gen_loss, disc_loss, gen_gan_loss, gen_l1_loss, disc_real_loss, disc_fake_loss = train_step_encdec(encoder, decoder, disc, input_image, target)
             
             # Acrescenta a loss no arquivo
             loss_df = loss_df.append({"Loss G": gen_loss.numpy(), "Loss D" : disc_loss.numpy()}, ignore_index = True)
+            # Log a loss no wandb 
+            wandb.log({ 'gen_loss': gen_loss.numpy(), 'gen_gan_loss': gen_gan_loss.numpy(), 'gen_l1_loss': gen_l1_loss.numpy(),
+                        'disc_loss': disc_loss.numpy(), 'disc_real_loss': disc_real_loss.numpy(), 'disc_fake_loss': disc_fake_loss.numpy() })
             
             # Printa pontinhos a cada 100. A cada 100 pontinhos, pula a linha
             if (n+1) % 100 == 0:
@@ -424,169 +503,20 @@ def fit_patchgan_encdec(encoder, decoder, disc, train_ds, first_epoch, epochs, t
                     print()      
             
         # saving (checkpoint) the model every x epochs
-        if (epoch) % CHECKPOINT_EPOCHS == 0:
+        if (epoch) % config.CHECKPOINT_EPOCHS == 0:
             checkpoint.save(file_prefix = checkpoint_prefix)
             print("\nSalvando checkpoint...")
             
         # salva o arquivo de losses a cada época e plota como está ficando
         loss_df.to_csv(experiment_folder + "losses.csv")
-        utils.plot_losses(loss_df)
+        if not config.QUIET_PLOT:
+            utils.plot_losses(loss_df)
         
         dt = time.time() - t1
         print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
+        wandb.log({'epoch time (s)': dt, 'epoch time (min)': dt/60})
     
     dt = time.time()-t0
-    print ('Tempo usado para {} épocas foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))  
-
-
-'''
-WGAN - GERADOR ÚNICO
-'''
-
-# Função para o gerador
-@tf.function
-def train_step_wgan(generator, disc, input_image, target, epoch):
-    # Está implementada sem o WGAN_NCRITIC
-    with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
-        
-        gen_image = generator(input_image, training = True)
-        
-        disc_real = disc([input_image, target], training=True)
-        disc_gen = disc([input_image, gen_image], training=True)
-          
-        gen_loss = loss_wgan_generator(disc_gen, gen_image, target)
-        disc_loss = loss_wgan_discriminator(disc_real, disc_gen)
-    
-    generator_gradients = gen_tape.gradient(gen_loss, generator.trainable_variables)
-    discriminator_gradients = disc_tape.gradient(disc_loss, disc.trainable_variables)
-    
-    generator_optimizer.apply_gradients(zip(generator_gradients, generator.trainable_variables))
-    discriminator_optimizer.apply_gradients(zip(discriminator_gradients, disc.trainable_variables))
-    
-    return (gen_loss, disc_loss)
-
-# Função para o gerador
-def fit_wgan(generator, disc, train_ds, first_epoch, epochs, test_ds):
-    
-    # Lê arquivo com as losses
-    try: 
-        loss_df = pd.read_csv(experiment_folder + "losses.csv")
-    except:
-        loss_df = pd.DataFrame(columns = ["Loss G", "Loss D"])
-    
-    t0 = time.time()
-    for epoch in range(first_epoch, epochs+1):
-        t1 = time.time()
-        
-        for example_input in test_ds.take(1):
-            filename = "epoch_" + str(epoch).zfill(len(str(EPOCHS))) + ".jpg"
-            utils.generate_save_images_gen(generator, example_input, result_folder, filename)
-        print("Epoch: ", epoch)
-        
-        # Train
-        for n, input_image in train_ds.enumerate():
-            
-            target = input_image
-            gen_loss, disc_loss = train_step_wgan(generator, disc, input_image, target, epoch)
-            
-            # Acrescenta a loss no arquivo
-            loss_df = loss_df.append({"Loss G": gen_loss.numpy(), "Loss D" : disc_loss.numpy()}, ignore_index = True)
-            
-            # Printa pontinhos a cada 100. A cada 100 pontinhos, pula a linha
-            if (n+1) % 100 == 0:
-                print('.', end='')
-                # utils.plot_losses(loss_df)
-                if (n+1) % (100*100) == 0:
-                    print()      
-            
-        # saving (checkpoint) the model every x epochs
-        if (epoch) % CHECKPOINT_EPOCHS == 0:
-            checkpoint.save(file_prefix = checkpoint_prefix)
-            print("\nSalvando checkpoint...")
-            
-        # salva o arquivo de losses a cada época e plota como está ficando
-        loss_df.to_csv(experiment_folder + "losses.csv")
-        utils.plot_losses(loss_df)
-        
-        dt = time.time() - t1
-        print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
-        
-    dt = time.time() - t0
-    print ('Tempo usado para {} épocas foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))  
-    
-
-'''
-WGAN-GP - GERADOR ÚNICO
-'''
-
-# Função para o gerador
-@tf.function
-def train_step_wgangp(generator, disc, input_image, target, epoch):
-    # Está implementada sem o WGAN_NCRITIC
-    with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
-        
-        gen_image = generator(input_image, training = True)
-        
-        disc_real = disc([input_image, target], training=True)
-        disc_gen = disc([input_image, gen_image], training=True)
-          
-        gen_loss = loss_wgangp_generator(disc_gen, gen_image, target)
-        disc_loss = loss_wgangp_discriminator(disc, disc_real, disc_gen, input_image, gen_image, target)
-    
-    generator_gradients = gen_tape.gradient(gen_loss, generator.trainable_variables)
-    discriminator_gradients = disc_tape.gradient(disc_loss, disc.trainable_variables)
-    
-    generator_optimizer.apply_gradients(zip(generator_gradients, generator.trainable_variables))
-    discriminator_optimizer.apply_gradients(zip(discriminator_gradients, disc.trainable_variables))
-    
-    return (gen_loss, disc_loss)
-
-# Função para o gerador
-def fit_wgangp(generator, disc, train_ds, first_epoch, epochs, test_ds):
-    
-    # Lê arquivo com as losses
-    try: 
-        loss_df = pd.read_csv(experiment_folder + "losses.csv")
-    except:
-        loss_df = pd.DataFrame(columns = ["Loss G", "Loss D"])
-    
-    t0 = time.time()
-    for epoch in range(first_epoch, epochs+1):
-        t1 = time.time()
-        
-        for example_input in test_ds.take(1):
-            filename = "epoch_" + str(epoch).zfill(len(str(EPOCHS))) + ".jpg"
-            utils.generate_save_images_gen(generator, example_input, result_folder, filename)
-        print("Epoch: ", epoch)
-        
-        # Train
-        for n, input_image in train_ds.enumerate():
-            
-            target = input_image
-            gen_loss, disc_loss = train_step_wgangp(generator, disc, input_image, target, epoch)
-            
-            # Acrescenta a loss no arquivo
-            loss_df = loss_df.append({"Loss G": gen_loss.numpy(), "Loss D" : disc_loss.numpy()}, ignore_index = True)
-            
-            # Printa pontinhos a cada 100. A cada 100 pontinhos, pula a linha
-            if (n+1) % 100 == 0:
-                print('.', end='')
-                if (n+1) % (100*100) == 0:
-                    print()      
-            
-        # saving (checkpoint) the model every 20 epochs
-        if (epoch) % CHECKPOINT_EPOCHS == 0:
-            checkpoint.save(file_prefix = checkpoint_prefix)
-            print("\nSalvando checkpoint...")
-            
-        # salva o arquivo de losses a cada época e plota como está ficando
-        loss_df.to_csv(experiment_folder + "losses.csv")
-        utils.plot_losses(loss_df)
-        
-        dt = time.time() - t1
-        print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
-        
-    dt = time.time() - t0
     print ('Tempo usado para {} épocas foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))  
 
 
@@ -594,54 +524,57 @@ def fit_wgangp(generator, disc, train_ds, first_epoch, epochs, test_ds):
 
 inp = load(train_folder+'/male/000016.jpg')
 # casting to int for matplotlib to show the image
-plt.figure()
-plt.imshow(inp/255.0)
+if not config.QUIET_PLOT:
+    plt.figure()
+    plt.imshow(inp/255.0)
 
 #%% PREPARAÇÃO DOS MODELOS
 
 # Define se irá ter a restrição de tamanho de peso da WGAN (clipping)
 constrained = False
-if loss_type == 'wgan':
+if config.loss_type == 'wgan':
         constrained = True
 
 # CRIANDO O MODELO DE GERADOR
-if gen_model == 'resnet':
-    generator = net.resnet_generator()
-elif gen_model == 'resnet_vetor': 
-    generator = net.resnet_adapted_generator()
-elif gen_model == 'full_resnet':
-    generator = net.VT_full_resnet_generator()
-elif gen_model == 'simple_decoder':
-    generator = net.VT_simple_decoder()
-elif gen_model == 'full_resnet_dis':
-    generator = net.VT_full_resnet_generator_disentangled()
-elif gen_model == 'simple_decoder_dis':
-    generator = net.VT_simple_decoder_disentangled()
-elif gen_model == 'encoder_decoder':
-    encoder = net.resnet_encoder()
-    decoder = net.resnet_decoder()
+if config.gen_model == 'resnet':
+    generator = net.resnet_generator(config.IMG_SIZE)
+elif config.gen_model == 'resnet_vetor': 
+    generator = net.resnet_adapted_generator(config.IMG_SIZE)
+elif config.gen_model == 'full_resnet':
+    generator = net.VT_full_resnet_generator(config.IMG_SIZE)
+elif config.gen_model == 'simple_decoder':
+    generator = net.VT_simple_decoder(config.IMG_SIZE)
+elif config.gen_model == 'full_resnet_dis':
+    generator = net.VT_full_resnet_generator_disentangled(config.IMG_SIZE)
+elif config.gen_model == 'simple_decoder_dis':
+    generator = net.VT_simple_decoder_disentangled(config.IMG_SIZE)
+elif config.gen_model == 'full_resnet_smooth':
+    generator = net.VT_full_resnet_generator_smooth_disentangle(config.IMG_SIZE)
+elif config.gen_model == 'simple_decoder_smooth':
+    generator = net.VT_full_simple_decoder_smooth_disentangle(config.IMG_SIZE)
+elif config.gen_model == 'encoder_decoder':
+    encoder = net.resnet_encoder(config.IMG_SIZE)
+    decoder = net.resnet_decoder(config.IMG_SIZE)
 else:
-    raise utils.GeneratorError(gen_model)
+    raise utils.GeneratorError(config.gen_model)
     
 # CRIANDO O MODELO DE DISCRIMINADOR
-if disc_model == 'patchgan':
-    disc = net.patchgan_discriminator()
-elif disc_model == 'patchgan_adapted': 
-    disc = net.patchgan_discriminator_adapted()
-elif disc_model == 'stylegan_adapted': 
-    disc = net.stylegan_discriminator_patchgan()
-elif disc_model == 'stylegan':
-    disc = net.stylegan_discriminator(constrained = constrained)
+if config.disc_model == 'patchgan':
+    disc = net.patchgan_discriminator(config.IMG_SIZE)
+elif config.disc_model == 'stylegan_adapted': 
+    disc = net.stylegan_discriminator_patchgan(config.IMG_SIZE)
+elif config.disc_model == 'stylegan':
+    disc = net.stylegan_discriminator(config.IMG_SIZE, constrained = constrained)
 else:
-    raise utils.DiscriminatorError(disc_model)
+    raise utils.DiscriminatorError(config.disc_model)
 
 # Define os otimizadores
-if USE_FULL_GENERATOR: 
-    generator_optimizer = tf.keras.optimizers.Adam(2e-4, beta_1=0.5)
+if config.USE_FULL_GENERATOR: 
+    generator_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE, beta_1=config.ADAM_BETA_1)
 else:
-    encoder_optimizer = tf.keras.optimizers.Adam(2e-4, beta_1=0.5)
-    decoder_optimizer = tf.keras.optimizers.Adam(2e-4, beta_1=0.5)
-discriminator_optimizer = tf.keras.optimizers.Adam(2e-4, beta_1=0.5)
+    encoder_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE, beta_1=config.ADAM_BETA_1)
+    decoder_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE, beta_1=config.ADAM_BETA_1)
+discriminator_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE, beta_1=config.ADAM_BETA_1)
 
 #%% EXECUÇÃO
 
@@ -649,16 +582,16 @@ discriminator_optimizer = tf.keras.optimizers.Adam(2e-4, beta_1=0.5)
 train_dataset = tf.data.Dataset.list_files(train_folder+'*/*.jpg')
 train_size = len(list(train_dataset))
 train_dataset = train_dataset.map(load_image_train)
-train_dataset = train_dataset.shuffle(BUFFER_SIZE)
-train_dataset = train_dataset.batch(BATCH_SIZE)
+train_dataset = train_dataset.shuffle(config.BUFFER_SIZE)
+train_dataset = train_dataset.batch(config.BATCH_SIZE)
 
 test_dataset = tf.data.Dataset.list_files(test_folder+'*/*.jpg')
 test_size = len(list(test_dataset))
 test_dataset = test_dataset.map(load_image_test)
-test_dataset = test_dataset.batch(BATCH_SIZE)
+test_dataset = test_dataset.batch(config.BATCH_SIZE)
 
 
-if USE_FULL_GENERATOR: 
+if config.USE_FULL_GENERATOR: 
     # Prepara o checkpoint (gerador)
     checkpoint = tf.train.Checkpoint(generator_optimizer = generator_optimizer,
                                      discriminator_optimizer = discriminator_optimizer,
@@ -674,18 +607,18 @@ else:
                                  disc = disc)
 
 # Se for o caso, recupera o checkpoint mais recente
-if LOAD_CHECKPOINT:
+if config.LOAD_CHECKPOINT:
     print("Carregando checkpoint mais recente...")
     latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir)
     if latest_checkpoint != None:
         checkpoint.restore(latest_checkpoint)
-        FIRST_EPOCH = int(latest_checkpoint.split("-")[1]) + 1
+        config.FIRST_EPOCH = int(latest_checkpoint.split("-")[1]) + 1
     else:
-        FIRST_EPOCH = 1
+        config.FIRST_EPOCH = 1
         
         
 # Salva o gerador e o discriminador (principalmente para visualização)
-if USE_FULL_GENERATOR: 
+if config.USE_FULL_GENERATOR: 
     generator.save(model_folder+'ae_generator.h5')
 else:
     encoder.save(model_folder+'ae_encoder.h5')
@@ -694,52 +627,58 @@ disc.save(model_folder+'ae_discriminator.h5')
 
 #%% TREINAMENTO
 
-if FIRST_EPOCH <= EPOCHS:
+if config.FIRST_EPOCH <= config.EPOCHS:
     
-    # CONDIÇÕES DA LOSS PATCHGAN
-    if USE_FULL_GENERATOR and loss_type == 'patchganloss': 
-        fit_patchgan(generator, disc, train_dataset, FIRST_EPOCH, EPOCHS, test_dataset)
-    elif (not USE_FULL_GENERATOR) and loss_type == 'patchganloss':
-        fit_patchgan_encdec(encoder, decoder, disc, train_dataset, FIRST_EPOCH, EPOCHS, test_dataset)
-    
-    # CONDIÇÕES DA LOSS WGAN
-    elif USE_FULL_GENERATOR and loss_type == 'wgan':
-        fit_wgan(generator, disc, train_dataset, FIRST_EPOCH, EPOCHS, test_dataset)
-    #elif (not USE_FULL_GENERATOR) and loss_type == 'wgan':
-    #    fit_wgan_encdec(encoder, decoder, disc, train_dataset, FIRST_EPOCH, EPOCHS, test_dataset)
-        
-    # CONDIÇÕES DA LOSS WGAN-GP
-    elif USE_FULL_GENERATOR and loss_type == 'wgan-gp':
-        fit_wgangp(generator, disc, train_dataset, FIRST_EPOCH, EPOCHS, test_dataset)
-    #elif (not USE_FULL_GENERATOR) and loss_type == 'wgan-gp':
-    #    fit_wgangp_encdec(encoder, decoder, disc, train_dataset, FIRST_EPOCH, EPOCHS, test_dataset)
-    
+    # CONDIÇÕES PARA GERADOR ÚNICO
+    if config.USE_FULL_GENERATOR: 
+        fit(generator, disc, train_dataset, config.FIRST_EPOCH, config.EPOCHS, test_dataset)
+    elif (not config.USE_FULL_GENERATOR):
+        fit_encdec(encoder, decoder, disc, train_dataset, config.FIRST_EPOCH, config.EPOCHS, test_dataset)
     else:
-        raise utils.LossError(loss_type)
+        raise utils.LossError(config.loss_type)
 
 #%% VALIDAÇÃO
 
+## Após o treinamento, loga uma imagem do dataset de teste para ver como ficou
+for example_input in test_dataset.take(1):
+    filename = "epoch_" + str(config.EPOCHS).zfill(len(str(config.EPOCHS))) + ".jpg"
+    fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
+
+    # Loga a figura no wandb
+    s = "epoch {}".format(config.EPOCHS)
+    wandbfig = wandb.Image(fig, caption="Epoch:{}".format(config.EPOCHS))
+    wandb.log({s: wandbfig})
+
+    if config.QUIET_PLOT:
+        plt.close(fig)
+
 ## Gera imagens do dataset de teste
 c = 1
-if NUM_TEST_PRINTS > 0:
-    for img in test_dataset.take(NUM_TEST_PRINTS):
-        filename = "test_results_" + str(c).zfill(len(str(NUM_TEST_PRINTS))) + ".jpg"
-        if USE_FULL_GENERATOR: 
+if config.NUM_TEST_PRINTS > 0:
+    for img in test_dataset.take(config.NUM_TEST_PRINTS):
+        filename = "test_results_" + str(c).zfill(len(str(config.NUM_TEST_PRINTS))) + ".jpg"
+        if config.USE_FULL_GENERATOR: 
             utils.generate_save_images_gen(generator, img, result_test_folder, filename)
         else:
             utils.generate_save_images(encoder, decoder, img, result_test_folder, filename)
         
         c = c + 1
+
+if config.QUIET_PLOT:
+    plt.close("all")
         
 ## Plota as losses
 try: 
     loss_df = pd.read_csv(experiment_folder + "losses.csv")
-    utils.plot_losses(loss_df)
+    fig = utils.plot_losses(loss_df)
+
+    if config.QUIET_PLOT:
+        plt.close(fig)
 except:
     None
 
 ## Salva os modelos 
-if USE_FULL_GENERATOR: 
+if config.USE_FULL_GENERATOR: 
     generator.save(model_folder+'ae_generator.h5')
 else:
     encoder.save(model_folder+'ae_encoder.h5')
@@ -747,26 +686,31 @@ else:
 
 disc.save(model_folder+'ae_discriminator.h5')
 
-
 # Salva os hiperparametros utilizados num arquivo txt
 f = open(experiment_folder + "parameters.txt","w+")
-f.write("LAMBDA = " + str(LAMBDA) + "\n")
-f.write("BATCH_SIZE = " + str(BATCH_SIZE) + "\n")
-f.write("BUFFER_SIZE = " + str(BUFFER_SIZE) + "\n")
-f.write("IMG_SIZE = " + str(IMG_SIZE) + "\n")
-f.write("EPOCHS = " + str(EPOCHS) + "\n")
-f.write("CHECKPOINT_EPOCHS = " + str(CHECKPOINT_EPOCHS) + "\n")
-f.write("LOAD_CHECKPOINT = " + str(LOAD_CHECKPOINT) + "\n")
-f.write("FIRST_EPOCH = " + str(FIRST_EPOCH) + "\n")
-f.write("NUM_TEST_PRINTS = " + str(NUM_TEST_PRINTS) + "\n")
-f.write("LAMBDA_GP = " + str(LAMBDA_GP) + "\n")
+f.write("LAMBDA = " + str(config.LAMBDA) + "\n")
+f.write("BATCH_SIZE = " + str(config.BATCH_SIZE) + "\n")
+f.write("BUFFER_SIZE = " + str(config.BUFFER_SIZE) + "\n")
+f.write("IMG_SIZE = " + str(config.IMG_SIZE) + "\n")
+f.write("EPOCHS = " + str(config.EPOCHS) + "\n")
+
+f.write("LEARNING_RATE = " + str(config.LEARNING_RATE) + "\n")
+f.write("ADAM_BETA_1 = " + str(config.ADAM_BETA_1) + "\n")
+
+f.write("CHECKPOINT_EPOCHS = " + str(config.CHECKPOINT_EPOCHS) + "\n")
+f.write("LOAD_CHECKPOINT = " + str(config.LOAD_CHECKPOINT) + "\n")
+f.write("FIRST_EPOCH = " + str(config.FIRST_EPOCH) + "\n")
+f.write("NUM_TEST_PRINTS = " + str(config.NUM_TEST_PRINTS) + "\n")
+f.write("LAMBDA_GP = " + str(config.LAMBDA_GP) + "\n")
 # f.write("WGAN_NCRITIC = " + str(WGAN_NCRITIC) + "\n")
 f.write("\n")
-f.write("gen_model = " + str(gen_model) + "\n")
-f.write("disc_model = " + str(disc_model) + "\n")
-f.write("loss_type = " + str(loss_type) + "\n")
-f.write("USE_FULL_GENERATOR = " + str(USE_FULL_GENERATOR) + "\n")
+f.write("gen_model = " + str(config.gen_model) + "\n")
+f.write("disc_model = " + str(config.disc_model) + "\n")
+f.write("loss_type = " + str(config.loss_type) + "\n")
+f.write("USE_FULL_GENERATOR = " + str(config.USE_FULL_GENERATOR) + "\n")
 # f.write("\n")
 # f.write("Tempo usado para {} épocas foi de {:.2f} min ({:.2f} sec)\n".format(EPOCHS, dt/60, dt))
 
 f.close()
+
+wandb.finish()

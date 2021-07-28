@@ -54,14 +54,17 @@ def generate_save_images_gen(generator, img_input, save_destination, filename):
         # getting the pixel values between [0, 1] to plot it.
         plt.imshow(display_list[i] * 0.5 + 0.5)
         plt.axis('off')
-    plt.show()
+    f.show()
     
     f.savefig(save_destination + filename)
+
+    return f
+
 
 def plot_losses(loss_df, plot_ma = True, window = 100):
     
     # Plota o principal
-    plt.figure()
+    f = plt.figure()
     sns.lineplot(x = range(loss_df.shape[0]), y = loss_df["Loss G"])
     sns.lineplot(x = range(loss_df.shape[0]), y = loss_df["Loss D"])
     
@@ -76,8 +79,10 @@ def plot_losses(loss_df, plot_ma = True, window = 100):
     else:
         plt.legend(["Loss G", "Loss D"])
     
-    plt.show()
+    f.show()
     
+    return f
+
 #%% TRATAMENTO DE EXCEÇÕES
     
 class GeneratorError(Exception):
@@ -95,3 +100,7 @@ class LossError(Exception):
 class LossCompatibilityError(Exception):
     def __init__(self, loss_type, disc_model):
         print("A loss " + loss_type + " não é compatível com o discriminador " + disc_model)
+
+class SizeCompatibilityError(Exception):
+    def __init__(self, img_size):
+        print("IMG_SIZE " + img_size + " não está disponível")
