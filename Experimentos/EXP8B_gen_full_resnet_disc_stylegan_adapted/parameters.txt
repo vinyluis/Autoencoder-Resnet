@@ -1,0 +1,14 @@
+LAMBDA = 100
+BATCH_SIZE = 1
+BUFFER_SIZE = 200
+IMG_SIZE = 256
+EPOCHS = 3
+CHECKPOINT_EPOCHS = 1
+LOAD_CHECKPOINT = True
+FIRST_EPOCH = 1
+NUM_TEST_PRINTS = 10
+
+gen_model = full_resnet
+disc_model = stylegan_adapted
+loss_type = patchganloss
+USE_FULL_GENERATOR = True
