@@ -1,16 +1,15 @@
 ### Imports
 import os
-from os.path import isfile, join
 import time
-
-import pandas as pd
 from matplotlib import pyplot as plt
-import seaborn as sns
-import numpy as np
 
-#%% Tensorflow
+# Módulos próprios
+import networks as net
+import utils
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
+### Tensorflow
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
 
 import tensorflow as tf
 
@@ -25,18 +24,67 @@ print(tf.config.list_physical_devices('GPU'))
 sess = tf.compat.v1.Session(config=tf.compat.v1.ConfigProto(log_device_placement=True))
 print(sess)
 
-#%%
+#%% HIPERPARÂMETROS
+LAMBDA = 100
+BATCH_SIZE = 1
+BUFFER_SIZE = 200
+IMG_SIZE = 256
 
-### Prepara as pastas
+EPOCHS = 5
+CHECKPOINT_EPOCHS = 1
+LOAD_CHECKPOINT = True
+FIRST_EPOCH = 1
+NUM_TEST_PRINTS = 10
+KEEP_CHECKPOINTS = 2
+
+### Controle do Modelo
+# Modelo do gerador. Possíveis = 'resnet', 'resnet_vetor', 'encoder_decoder', 'full_resnet', 'simple_decoder'
+gen_model = 'full_resnet'
+
+# Modelo do discriminador. Possíveis = 'patchgan', 'patchgan_adapted', 'stylegan_adapted'
+disc_model = 'stylegan_adapted'
+
+# Acerta o flag USE_FULL_GENERATOR que indica se o gerador é único (full) ou partido (encoder + decoder)
+if gen_model == 'encoder_decoder':
+    USE_FULL_GENERATOR = False
+else:
+    USE_FULL_GENERATOR = True
+
+
+#%% Prepara as pastas
+
+### Prepara o nome da pasta que vai salvar o resultado dos experimentos
+experiment_root = '../Experimentos/'
+experiment_folder = experiment_root + 'EXP_'
+experiment_folder += 'gen_'
+experiment_folder += gen_model
+experiment_folder += '_disc_'
+experiment_folder += disc_model
+if BATCH_SIZE != 1:
+    experiment_folder += '_BATCH_' + str(BATCH_SIZE)
+experiment_folder += '/'
+
+
+### Pastas do dataset
 dataset_folder = 'C:/Users/T-Gamer/OneDrive/Vinicius/01-Estudos/00_Datasets/celeba_hq/'
+# dataset_folder = 'C:/Users/Vinícius/OneDrive/Vinicius/01-Estudos/00_Datasets/celeba_hq/'
 
 train_folder = dataset_folder+'train/'
 test_folder = dataset_folder+'val/'
 
-result_folder = 'results-train-autoencoder/'
-result_test_folder = 'results-test-autoencoder/'
+### Pastas dos resultados
+result_folder = experiment_folder + 'results-train-autoencoder/'
+result_test_folder = experiment_folder + 'results-test-autoencoder/'
 
-model_folder = 'model/'
+model_folder = experiment_folder + 'model/'
+
+### Cria as pastas, se não existirem
+
+if not os.path.exists(experiment_root):
+    os.mkdir(experiment_root)
+
+if not os.path.exists(experiment_folder):
+    os.mkdir(experiment_folder)
 
 if not os.path.exists(result_folder):
     os.mkdir(result_folder)
@@ -47,23 +95,11 @@ if not os.path.exists(result_test_folder):
 if not os.path.exists(model_folder):
     os.mkdir(model_folder)
     
-checkpoint_dir = 'training_checkpoints_autoencoder'
+### Pasta do checkpoint
+    
+checkpoint_dir = experiment_folder + 'training_checkpoints'
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
 
-## HIPERPARÂMETROS
-LAMBDA = 100
-BATCH_SIZE = 1
-BUFFER_SIZE = 200
-IMG_SIZE = 256
-
-EPOCHS = 5
-CHECKPOINT_EPOCHS = 1
-LOAD_CHECKPOINT = True
-FIRST_EPOCH = 1
-NUM_TEST_PRINTS = 1
-
-# Controla se vai usar o gerador completo ou o modo encoder/decoder
-USE_FULL_GENERATOR = True
 
 #%% FUNÇÕES DE APOIO
 
@@ -113,568 +149,6 @@ def load_image_test(image_file):
     input_image = normalize(input_image)
     return input_image
 
-def generate_images(encoder, decoder, img_input):
-    latent = encoder(img_input, training=True)
-    img_predict = decoder(latent, training=True)
-    plt.figure(figsize=(15,15))
-    
-    display_list = [img_input[0], img_predict[0]]
-    title = ['Input Image', 'Predicted Image']
-    
-    for i in range(2):
-        plt.subplot(1, 2, i+1)
-        plt.title(title[i])
-        # getting the pixel values between [0, 1] to plot it.
-        plt.imshow(display_list[i] * 0.5 + 0.5)
-        plt.axis('off')
-    plt.show()  
-    
-def generate_save_images(encoder, decoder, img_input, save_destination, filename):
-    latent = encoder(img_input, training=True)
-    img_predict = decoder(latent, training=True)
-    f = plt.figure(figsize=(15,15))
-    
-    print("Latent Vector:")
-    print(latent)
-    
-    display_list = [img_input[0], img_predict[0]]
-    title = ['Input Image', 'Predicted Image']
-    
-    for i in range(2):
-        plt.subplot(1, 2, i+1)
-        plt.title(title[i])
-        # getting the pixel values between [0, 1] to plot it.
-        plt.imshow(display_list[i] * 0.5 + 0.5)
-        plt.axis('off')
-    plt.show()
-    
-    f.savefig(save_destination + filename)
-    
-def generate_save_images_gen(generator, img_input, save_destination, filename):
-    img_predict = generator(img_input, training=True)
-    f = plt.figure(figsize=(15,15))
-    
-    display_list = [img_input[0], img_predict[0]]
-    title = ['Input Image', 'Predicted Image']
-    
-    for i in range(2):
-        plt.subplot(1, 2, i+1)
-        plt.title(title[i])
-        # getting the pixel values between [0, 1] to plot it.
-        plt.imshow(display_list[i] * 0.5 + 0.5)
-        plt.axis('off')
-    plt.show()
-    
-    f.savefig(save_destination + filename)
-
-
-#%% BLOCOS RESNET
-
-def resnet_block(input_tensor, filters):
-    
-    ''' 
-    Cria um bloco resnet baseado na Resnet34
-    https://openaccess.thecvf.com/content_cvpr_2016/papers/He_Deep_Residual_Learning_CVPR_2016_paper.pdf
-    '''
-    
-    x = input_tensor
-    skip = input_tensor
-    
-    # Primeira convolução (kernel = 3, 3)
-    x = tf.keras.layers.Conv2D(filters = filters, kernel_size = (3, 3), padding = 'same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Segunda convolução (kernel = 3, 3)
-    x = tf.keras.layers.Conv2D(filters = filters, kernel_size = (3, 3), padding = 'same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    
-    # Concatenação
-    x = tf.keras.layers.Add()([x, skip])
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    return x
-
-
-def resnet_block_transpose(input_tensor, filters):
-    
-    ''' 
-    Cria um bloco resnet baseado na Resnet34, mas invertido
-    https://openaccess.thecvf.com/content_cvpr_2016/papers/He_Deep_Residual_Learning_CVPR_2016_paper.pdf
-    '''
-    
-    x = input_tensor
-    skip = input_tensor
-    
-    # Primeira convolução (kernel = 3, 3)
-    x = tf.keras.layers.Conv2DTranspose(filters = filters, kernel_size = (3, 3), padding = 'same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Activation('relu')(x)
-    
-    # Segunda convolução (kernel = 3, 3)
-    x = tf.keras.layers.Conv2DTranspose(filters = filters, kernel_size = (3, 3), padding = 'same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    
-    # Concatenação
-    x = tf.keras.layers.Add()([x, skip])
-    x = tf.keras.layers.Activation('relu')(x)
-    
-    return x
-
-
-def resnet_bottleneck_block(input_tensor, filters):
-    
-    ''' 
-    Cria um bloco resnet bottleneck, baseado na Resnet50
-    https://openaccess.thecvf.com/content_cvpr_2016/papers/He_Deep_Residual_Learning_CVPR_2016_paper.pdf
-    '''
-    
-    x = input_tensor
-    skip = input_tensor
-    
-    # Primeira convolução (kernel = 1, 1)
-    x = tf.keras.layers.Conv2D(filters = filters, kernel_size = (1, 1))(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Segunda convolução (kernel = 3, 3)
-    x = tf.keras.layers.Conv2D(filters = filters, kernel_size = (3, 3), padding = 'same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Terceira convolução (kernel = 1, 1)
-    x = tf.keras.layers.Conv2D(filters = filters * 4, kernel_size = (1, 1))(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    
-    # Concatenação
-    x = tf.keras.layers.Add()([x, skip])
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    return x
-
-def resnet_downsample_bottleneck_block(input_tensor, filters):
-    
-    ''' 
-    Cria um bloco resnet bottleneck, com redução de dimensão, baseado na Resnet50
-    https://openaccess.thecvf.com/content_cvpr_2016/papers/He_Deep_Residual_Learning_CVPR_2016_paper.pdf
-    '''
-    
-    x = input_tensor
-    skip = input_tensor
-    
-    # Convolução da skip connection
-    skip = tf.keras.layers.Conv2D(filters = filters * 4, kernel_size = (1, 1))(skip)
-    skip = tf.keras.layers.BatchNormalization()(skip)
-    
-    # Primeira convolução (kernel = 1, 1)
-    x = tf.keras.layers.Conv2D(filters = filters, kernel_size = (1, 1))(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Segunda convolução (kernel = 3, 3)
-    x = tf.keras.layers.Conv2D(filters = filters, kernel_size = (3, 3), padding = 'same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Terceira convolução (kernel = 1, 1)
-    x = tf.keras.layers.Conv2D(filters = filters * 4, kernel_size = (1, 1))(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    
-    # Concatenação
-    x = tf.keras.layers.Add()([x, skip])
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    return x
-
-def upsample(x, filters):
-    
-    # Reconstrução da imagem, baseada na Pix2Pix / CycleGAN
-    
-    initializer = tf.random_normal_initializer(0., 0.02)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = filters, kernel_size = (3, 3) , strides = (2, 2), padding = "same",
-                               kernel_initializer=initializer, use_bias = True)(x)
-
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    return x
-
-
-def downsample(x, filters):
-    
-    # Reconstrução da imagem, baseada na Pix2Pix / CycleGAN
-
-    initializer = tf.random_normal_initializer(0., 0.02)
-    
-    x = tf.keras.layers.Conv2D(filters = filters, kernel_size = (3, 3) , strides = (2, 2), padding = "same",
-                               kernel_initializer=initializer, use_bias = True)(x)
-    
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    return x
-
-
-#%% MODELOS
-
-def cyclegan_resnet_encoder(apply_batchnorm = True, apply_dropout=False):
-    
-    '''
-    Adaptado no gerador utilizado no paper CycleGAN
-    '''
-    
-    # Inicializa a rede
-    initializer = tf.random_normal_initializer(0., 0.02)
-    inputs = tf.keras.layers.Input(shape = [256 , 256 , 3])
-    x = inputs
-    
-    # Primeiras camadas (pré blocos residuais)
-    x = tf.keras.layers.ZeroPadding2D([[3, 3],[3, 3]])(x)
-    x = tf.keras.layers.Conv2D(filters = 64, kernel_size = (7, 7) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    #--
-    x = tf.keras.layers.Conv2D(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-    #--
-    x = tf.keras.layers.Conv2D(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block(x, 256)
-
-    # Camadas finais
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    #x = tf.keras.layers.Flatten()(x)
-    x = tf.keras.layers.Dense(units = 512, activation = 'softmax')(x)    
-
-    # Cria o modelo
-    return tf.keras.Model(inputs = inputs, outputs = x)
-
-
-def cyclegan_resnet_decoder():
-    
-    '''
-    Adaptado no gerador utilizado no paper CycleGAN
-    '''
-    
-    # Inicializa a rede
-    initializer = tf.random_normal_initializer(0., 0.02)
-    inputs = tf.keras.layers.Input(shape = [512])
-    x = tf.expand_dims(inputs, axis = 1)
-    x = tf.expand_dims(x, axis = 1)
-    
-    # Reconstrução da imagem
-    x = upsample(x, 512)
-    x = upsample(x, 512)
-    x = upsample(x, 512)
-    x = upsample(x, 512)
-    x = upsample(x, 256)
-    x = upsample(x, 128)
-    x = upsample(x, 64)
-    
-    # Última camada
-    x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Activation('tanh')(x)
-    
-    # Cria o modelo
-    return tf.keras.Model(inputs = inputs, outputs = x)    
-
-
-def cyclegan_resnet_generator(apply_batchnorm = True, apply_dropout=False):
-    
-    '''
-    Adaptado no gerador utilizado no paper CycleGAN
-    '''
-    
-    # Inicializa a rede
-    initializer = tf.random_normal_initializer(0., 0.02)
-    inputs = tf.keras.layers.Input(shape = [256 , 256 , 3])
-    x = inputs
-    
-    # Primeiras camadas (pré blocos residuais)
-    x = tf.keras.layers.ZeroPadding2D([[3, 3],[3, 3]])(x)
-    x = tf.keras.layers.Conv2D(filters = 64, kernel_size = (7, 7) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    #--
-    x = tf.keras.layers.Conv2D(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-    #--
-    x = tf.keras.layers.Conv2D(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block(x, 256)
-        
-    # Reconstrução da imagem
-    x = tf.keras.layers.Conv2DTranspose(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 64, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ReLU()(x)
-
-    # Camadas finais
-    x = tf.keras.layers.ZeroPadding2D([[2, 2],[2, 2]])(x)
-    x = tf.keras.layers.Conv2D(filters = 3, kernel_size = (7, 7) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.Activation('tanh')(x)
-    
-    #print(x.shape)
-
-    # Cria o modelo
-    return tf.keras.Model(inputs = inputs, outputs = x)
-
-
-def cyclegan_resnet_adapted_generator(apply_batchnorm = True, apply_dropout=False):
-    
-    '''
-    Adaptado no gerador utilizado no paper CycleGAN
-    '''
-    
-    # Inicializa a rede
-    initializer = tf.random_normal_initializer(0., 0.02)
-    inputs = tf.keras.layers.Input(shape = [256 , 256 , 3])
-    x = inputs
-    
-    # Primeiras camadas (pré blocos residuais)
-    x = tf.keras.layers.ZeroPadding2D([[3, 3],[3, 3]])(x)
-    x = tf.keras.layers.Conv2D(filters = 64, kernel_size = (7, 7) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    #--
-    x = tf.keras.layers.Conv2D(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-    #--
-    x = tf.keras.layers.Conv2D(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block(x, 256)
-        
-    # Criação do vetor latente
-    #x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    #x = tf.keras.layers.Dense(units = 512, kernel_initializer=initializer)(x)
-    
-    # Criação do vetor latente (alternativa)
-    vecsize = 512
-    x = tf.keras.layers.Conv2D(filters = 1, kernel_size = (3, 3) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    x = tf.keras.layers.Flatten()(x)
-    x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
-    
-    # Transforma novamente num tensor de terceira ordem
-    x = tf.expand_dims(x, axis = 1)
-    x = tf.expand_dims(x, axis = 1)
-        
-    # Reconstrução da imagem
-    for i in range(5):
-        x = tf.keras.layers.Conv2DTranspose(filters = vecsize, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
-        x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ReLU()(x)
-        
-    x = tf.keras.layers.Conv2DTranspose(filters = vecsize/2, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = vecsize/4, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = vecsize/8, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ReLU()(x)
-
-    # Camadas finais
-    # x = tf.keras.layers.ZeroPadding2D([[2, 2],[2, 2]])(x)
-    x = tf.keras.layers.Conv2D(filters = 3, kernel_size = (7, 7) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.Activation('tanh')(x)
-    
-    # print(x.shape)
-
-    # Cria o modelo
-    return tf.keras.Model(inputs = inputs, outputs = x)
-
-#%%
-
-def VT_full_resnet_generator(apply_batchnorm = True, apply_dropout=False):
-
-    
-    # Inicializa a rede
-    initializer = tf.random_normal_initializer(0., 0.02)
-    inputs = tf.keras.layers.Input(shape = [256 , 256 , 3])
-    x = inputs
-    
-    # Primeiras camadas (pré blocos residuais)
-    x = tf.keras.layers.ZeroPadding2D([[3, 3],[3, 3]])(x)
-    x = tf.keras.layers.Conv2D(filters = 64, kernel_size = (7, 7) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    #--
-    x = tf.keras.layers.Conv2D(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-    #--
-    x = tf.keras.layers.Conv2D(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block(x, 256)
-    
-    # Criação do vetor latente 
-    vecsize = 512
-    x = tf.keras.layers.Conv2D(filters = 1, kernel_size = (3, 3) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    x = tf.keras.layers.Flatten()(x)
-    x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
-    
-    # Transforma novamente num tensor de terceira ordem
-    x = tf.expand_dims(x, axis = 1)
-    x = tf.expand_dims(x, axis = 1)
-        
-    # Upsamplings
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block_transpose(x, 256)
-    
-    # Reconstrução pós blocos residuais
-    
-    #--
-    x = tf.keras.layers.Conv2DTranspose(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    #--
-    x = tf.keras.layers.Conv2DTranspose(filters = 64, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ReLU()(x)
-
-    # Camadas finais
-    # x = tf.keras.layers.ZeroPadding2D([[1, 1],[1, 1]])(x)
-    x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (7, 7) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.Activation('tanh')(x)
-    
-    # print(x.shape)
-
-    # Cria o modelo
-    return tf.keras.Model(inputs = inputs, outputs = x)
-
-#vtmodel = VT_full_resnet_generator()
-#vtmodel.save("teste_vtmodel.h5")
-
-
-#%%
-
-def discriminator():
-    
-    '''
-    Adaptado do discriminador utilizado no paper CycleGAN
-    '''
-    
-    # Inicializa a rede e os inputs
-    initializer = tf.random_normal_initializer(0., 0.02)
-    inp = tf.keras.layers.Input(shape=[256, 256, 3], name='input_image')
-    tar = tf.keras.layers.Input(shape=[256, 256, 3], name='target_image')
-    x = tf.keras.layers.concatenate([inp, tar])
-    
-    # Camadas intermediárias
-    x = downsample(x, 64) # (bs, 128, 128, 64)
-    x = downsample(x, 128) # (bs, 64, 64, 128)
-    x = downsample(x, 256) # (bs, 32, 32, 256)
-    x = tf.keras.layers.ZeroPadding2D()(x) # (bs, 34, 34, 256)
-    
-    # Camada de ajuste
-    x = tf.keras.layers.Conv2D(512, 3, strides=1, kernel_initializer=initializer)(x) # (bs, 31, 31, 512)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.ZeroPadding2D()(x) # (bs, 33, 33, 512)
-    
-    # Camada final (30 x 30 x 1) - Para usar o L1 loss
-    x = tf.keras.layers.Conv2D(1, 3, strides=1, kernel_initializer=initializer)(x) # (bs, 30, 30, 1)
-    
-    return tf.keras.Model(inputs=[inp, tar], outputs=x)
-
-
-def patchgan_discriminator():
-    
-    '''
-    Adaptado diretamente do PatchGAN usado nos papers da CycleGAN e Pix2Pix
-    '''
-    
-    # Inicializa a rede e os inputs
-    initializer = tf.random_normal_initializer(0., 0.02)
-    inp = tf.keras.layers.Input(shape=[256, 256, 3], name='input_image')
-    tar = tf.keras.layers.Input(shape=[256, 256, 3], name='target_image')
-    # Na implementação em torch, a concatenação ocorre dentro da classe pix2pixmodel
-    x = tf.keras.layers.concatenate([inp, tar]) 
-    
-    # Convoluções
-    x = tf.keras.layers.Conv2D(64, 4, strides=2, kernel_initializer=initializer, padding = 'same')(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    
-    x = tf.keras.layers.Conv2D(128, 4, strides=2, kernel_initializer=initializer, padding = 'valid')(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    
-    x = tf.keras.layers.Conv2D(256, 4, strides=2, kernel_initializer=initializer, padding = 'valid')(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    
-    x = tf.keras.layers.Conv2D(512, 4, strides=1, kernel_initializer=initializer, padding = 'same')(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    
-    # Camada final (30 x 30 x 1) - Para usar o L1 loss
-    x = tf.keras.layers.Conv2D(1, 4, strides=1, kernel_initializer=initializer, padding = 'same')(x)
-    
-    return tf.keras.Model(inputs=[inp, tar], outputs=x)
 
 #%% DEFINIÇÃO DAS LOSSES
 
@@ -797,14 +271,14 @@ def fit(train_ds, first_epoch, epochs, test_ds):
         
         for example_input in test_ds.take(1):
             filename = "epoch_" + str(epoch).zfill(len(str(EPOCHS))) + ".jpg"
-            generate_save_images(encoder, decoder, example_input, result_folder, filename)
+            utils.generate_save_images(encoder, decoder, example_input, result_folder, filename)
         print("Epoch: ", epoch)
         
         # Train
         for n, input_image in train_ds.enumerate():
             
             target = input_image
-            losses = train_step(input_image, target, epoch)
+            train_step(input_image, target, epoch)
             
             # Printa pontinhos a cada 100. A cada 100 pontinhos, pula a linha
             if (n+1) % 100 == 0:
@@ -836,14 +310,14 @@ def fit_gen(train_ds, first_epoch, epochs, test_ds):
         
         for example_input in test_ds.take(1):
             filename = "epoch_" + str(epoch).zfill(len(str(EPOCHS))) + ".jpg"
-            generate_save_images_gen(generator, example_input, result_folder, filename)
+            utils.generate_save_images_gen(generator, example_input, result_folder, filename)
         print("Epoch: ", epoch)
         
         # Train
         for n, input_image in train_ds.enumerate():
             
             target = input_image
-            losses = train_step_gen(input_image, target, epoch)
+            train_step_gen(input_image, target, epoch)
             
             # Printa pontinhos a cada 100. A cada 100 pontinhos, pula a linha
             if (n+1) % 100 == 0:
@@ -863,6 +337,7 @@ def fit_gen(train_ds, first_epoch, epochs, test_ds):
     
     dt = time.time()-t0
     print ('Tempo usado para {} épocas foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))  
+
   
 #%% TESTA O CÓDIGO E MOSTRA UMA IMAGEM DO DATASET
 
@@ -874,16 +349,38 @@ plt.imshow(inp/255.0)
 
 #%% PREPARAÇÃO DOS MODELOS
 
-# Criando os modelos
-if USE_FULL_GENERATOR: 
-    # generator = cyclegan_resnet_generator()
-    generator = cyclegan_resnet_adapted_generator()
+# CRIANDO O MODELO DE GERADOR
+class GeneratorError(Exception):
+    def __init__(self, gen_model):
+        print("O gerador " + gen_model + " é desconhecido")
+
+if gen_model == 'resnet':
+    generator = net.resnet_generator()
+elif gen_model == 'resnet_vetor': 
+    generator = net.resnet_adapted_generator()
+elif gen_model == 'full_resnet':
+    generator = net.VT_full_resnet_generator()
+elif gen_model == 'simple_decoder':
+    generator = net.VT_simple_decoder()
+elif gen_model == 'encoder_decoder':
+    encoder = net.resnet_encoder()
+    decoder = net.resnet_decoder()
 else:
-    encoder = cyclegan_resnet_encoder()
-    decoder = cyclegan_resnet_decoder()
+    raise GeneratorError(gen_model)
     
-# disc = discriminator()
-disc = patchgan_discriminator()
+# CRIANDO O MODELO DE DISCRIMINADOR
+class DiscriminatorError(Exception):
+    def __init__(self, disc_model):
+        print("O discriminador " + disc_model + " é desconhecido")
+
+if disc_model == 'patchgan':
+    disc = net.patchgan_discriminator()
+elif disc_model == 'patchgan_adapted': 
+    disc = net.patchgan_discriminator_adapted()
+elif disc_model == 'stylegan_adapted': 
+    disc = net.stylegan_discriminator_adapted()
+else:
+    raise DiscriminatorError(disc_model)
 
 # Define os otimizadores
 if USE_FULL_GENERATOR: 
@@ -892,14 +389,6 @@ else:
     encoder_optimizer = tf.keras.optimizers.Adam(2e-4, beta_1=0.5)
     decoder_optimizer = tf.keras.optimizers.Adam(2e-4, beta_1=0.5)
 discriminator_optimizer = tf.keras.optimizers.Adam(2e-4, beta_1=0.5)
-
-# Salva o gerador e o discriminador (principalmente para visualização)
-if USE_FULL_GENERATOR: 
-    generator.save(model_folder+'ae_generator.h5')
-else:
-    encoder.save(model_folder+'ae_encoder.h5')
-    decoder.save(model_folder+'ae_decoder.h5')
-disc.save(model_folder+'ae_discriminator.h5')
 
 #%% EXECUÇÃO
 
@@ -931,6 +420,9 @@ else:
                                  decoder = decoder,
                                  disc = disc)
 
+
+# ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path, max_to_keep = KEEP_CHECKPOINTS)
+
 # Se for o caso, recupera o checkpoint mais recente
 if LOAD_CHECKPOINT:
     print("Carregando checkpoint mais recente...")
@@ -940,32 +432,41 @@ if LOAD_CHECKPOINT:
         FIRST_EPOCH = int(latest_checkpoint.split("-")[1]) + 1
     else:
         FIRST_EPOCH = 1
+        
+        
+# Salva o gerador e o discriminador (principalmente para visualização)
+if USE_FULL_GENERATOR: 
+    generator.save(model_folder+'ae_generator.h5')
+else:
+    encoder.save(model_folder+'ae_encoder.h5')
+    decoder.save(model_folder+'ae_decoder.h5')
+disc.save(model_folder+'ae_discriminator.h5')
 
 #%% TREINAMENTO
+
 
 if FIRST_EPOCH <= EPOCHS:
     if USE_FULL_GENERATOR: 
         fit_gen(train_dataset, FIRST_EPOCH, EPOCHS, test_dataset)
     else:
         fit(train_dataset, FIRST_EPOCH, EPOCHS, test_dataset)
-    
 
+#%% VALIDAÇÃO
 
-#%% Mostra resultado
+## Gera imagens do dataset de teste
 
 c = 1
 if NUM_TEST_PRINTS > 0:
     for img in test_dataset.take(NUM_TEST_PRINTS):
         filename = "test_results_" + str(c).zfill(len(str(NUM_TEST_PRINTS))) + ".jpg"
         if USE_FULL_GENERATOR: 
-            generate_images(generator, img)
+            utils.generate_save_images_gen(generator, img, result_test_folder, filename)
         else:
-            generate_images(encoder, decoder, img)
+            utils.generate_save_images(encoder, decoder, img, result_test_folder, filename)
         
         c = c + 1
-    
 
-#%% Salva o gerador e o discriminador
+## Salva os modelos 
 
 if USE_FULL_GENERATOR: 
     generator.save(model_folder+'ae_generator.h5')
@@ -974,3 +475,24 @@ else:
     decoder.save(model_folder+'ae_decoder.h5')
 
 disc.save(model_folder+'ae_discriminator.h5')
+
+
+# Salva os hiperparametros utilizados num arquivo txt
+f = open(experiment_folder + "parameters.txt","w+")
+f.write("LAMBDA = " + str(LAMBDA) + "\n")
+f.write("BATCH_SIZE = " + str(BATCH_SIZE) + "\n")
+f.write("BUFFER_SIZE = " + str(BUFFER_SIZE) + "\n")
+f.write("IMG_SIZE = " + str(IMG_SIZE) + "\n")
+f.write("EPOCHS = " + str(EPOCHS) + "\n")
+f.write("CHECKPOINT_EPOCHS = " + str(CHECKPOINT_EPOCHS) + "\n")
+f.write("LOAD_CHECKPOINT = " + str(LOAD_CHECKPOINT) + "\n")
+f.write("FIRST_EPOCH = " + str(FIRST_EPOCH) + "\n")
+f.write("NUM_TEST_PRINTS = " + str(NUM_TEST_PRINTS) + "\n")
+f.write("\n")
+f.write("gen_model = " + str(gen_model) + "\n")
+f.write("disc_model = " + str(disc_model) + "\n")
+f.write("USE_FULL_GENERATOR = " + str(USE_FULL_GENERATOR) + "\n")
+# f.write("\n")
+# f.write("Tempo usado para {} épocas foi de {:.2f} min ({:.2f} sec)\n".format(EPOCHS, dt/60, dt))
+
+f.close()
