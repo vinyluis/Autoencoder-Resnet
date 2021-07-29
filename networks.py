@@ -1,4 +1,8 @@
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 import tensorflow as tf
+tf.get_logger().setLevel('ERROR')
 import tensorflow_addons as tfa
 
 ## Tipo de normalização
@@ -7,7 +11,6 @@ norm_layer = tfa.layers.InstanceNormalization
 
 ## Modo de inicialização dos pesos
 initializer = tf.random_normal_initializer(0., 0.02)
-
 
 
 #%% BLOCOS 

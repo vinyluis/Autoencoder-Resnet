@@ -1,5 +1,4 @@
 # FUNÇÕES DE APOIO PARA O AUTOENCODER
-import tensorflow as tf
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
@@ -53,7 +52,7 @@ def generate_save_images(encoder, decoder, img_input, save_destination, filename
         # getting the pixel values between [0, 1] to plot it.
         plt.imshow(display_list[i] * 0.5 + 0.5)
         plt.axis('off')
-    plt.show()
+    f.show()
     
     f.savefig(save_destination + filename)
     
@@ -120,3 +119,7 @@ class LossCompatibilityError(Exception):
 class SizeCompatibilityError(Exception):
     def __init__(self, img_size):
         print("IMG_SIZE " + img_size + " não está disponível")
+
+class TransferUpsampleError(Exception):
+    def __init__(self, upsample):
+        print("Tipo de upsampling " + upsample + " não definido")

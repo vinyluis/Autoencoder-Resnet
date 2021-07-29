@@ -7,69 +7,85 @@ from matplotlib import pyplot as plt
 import seaborn as sns
 import pandas as pd
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
+import tensorflow as tf
+
 # Módulos próprios
 import networks as net
 import utils
+import transferlearning as transfer
 
-### Tensorflow
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
-
-import tensorflow as tf
+#%% Config Tensorflow
 
 # Evita o erro "Failed to get convolution algorithm. This is probably because cuDNN failed to initialize"
-tfconfig = tf.compat.v1.ConfigProto()
-tfconfig.gpu_options.allow_growth = True
-session = tf.compat.v1.InteractiveSession(config=tfconfig)
+# tfconfig = tf.compat.v1.ConfigProto()
+# tfconfig.gpu_options.allow_growth = True
+# session = tf.compat.v1.InteractiveSession(config=tfconfig)
 
 # Verifica se a GPU está disponível:
-print(tf.config.list_physical_devices('GPU'))
+# print(tf.config.list_physical_devices('GPU'))
 # Verifica se a GPU está sendo usada na sessão
-sess = tf.compat.v1.Session(config=tf.compat.v1.ConfigProto(log_device_placement=True))
-print(sess)
+# sess = tf.compat.v1.Session(config=tf.compat.v1.ConfigProto(log_device_placement=True))
+# print(sess)
 
 #%% Weights & Biases
 
 import wandb
-from wandb.keras import WandbCallback
 # wandb.init(project='autoencoder_resnet', entity='vinyluis', mode="disabled")
 wandb.init(project='autoencoder_resnet', entity='vinyluis', mode="online")
 
-
 #%% HIPERPARÂMETROS
 config = wandb.config # Salva os hiperparametros no Weights & Biases também
+
+# Root do sistema
+# base_root = "../"
+base_root = ""
+
+# Parâmetros de treinamento
 config.LAMBDA = 100 # Efeito da Loss L1
 config.BATCH_SIZE = 1
 config.BUFFER_SIZE = 150
 config.IMG_SIZE = 128
 config.LEARNING_RATE = 1e-5
-# config.ADAM_BETA_1 = 0.5 #0.5 para a PatchGAN e 0.9 para a WGAN - Definido no código
-
-config.QUIET_PLOT = True
-
-# config.FIRST_EPOCH = 1 # Definido em código, no checkpoint
 config.EPOCHS = 3
+config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
+# config.ADAM_BETA_1 = 0.5 #0.5 para a PatchGAN e 0.9 para a WGAN - Definido no código
+# config.FIRST_EPOCH = 1 # Definido em código, no checkpoint
+
+# Parâmetros de plot
+config.QUIET_PLOT = True
+config.NUM_TEST_PRINTS = 10
+
+# Controle do Checkpoint
 config.CHECKPOINT_EPOCHS = 1
 config.LOAD_CHECKPOINT = True
-config.NUM_TEST_PRINTS = 10
 config.KEEP_CHECKPOINTS = 2
-config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
-# config.WGAN_NCRITIC = 1 # A StyleGAN treina o Discriminador e o Gerador na mesma proporção (Ncritic = 1)
 
 #%% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp = "12A"
+config.exp = "12B"
 
 # Modelo do gerador. Possíveis = 'resnet', 'resnet_vetor', 'encoder_decoder', 'full_resnet', 'simple_decoder', 
-# 'full_resnet_dis', 'simple_decoder_dis', 'full_resnet_smooth', 'simple_decoder_smooth'
+# 'full_resnet_dis', 'simple_decoder_dis', 'full_resnet_smooth', 'simple_decoder_smooth', 'transfer'
 config.gen_model = 'full_resnet_smooth'
 
 # Modelo do discriminador. Possíveis = 'patchgan', 'stylegan_adapted', 'stylegan'
-config.disc_model = 'patchgan'
+config.disc_model = 'stylegan'
 
 # Tipo de loss. Possíveis = 'patchganloss', 'wgan', 'wgan-gp'
-config.loss_type = 'patchganloss'
+config.loss_type = 'wgan'
+
+# Faz a configuração do transfer learning, se for selecionado
+if config.gen_model == 'transfer':
+    config.transfer_generator_path = base_root + "Experimentos/EXP11A_gen_resnet_disc_stylegan/model/"
+    config.transfer_generator_filename = "ae_generator.h5"
+    config.transfer_middle_model = 'conv'
+    config.transfer_trainable = False
+    config.transfer_encoder_last_layer = 'leaky_re_lu_20'
+    config.transfer_decoder_first_layer = 'conv2d_transpose'
+    config.transfer_disentangle = True
+    config.transfer_smooth_vector = False
 
 # Acerta o flag USE_FULL_GENERATOR que indica se o gerador é único (full) ou partido (encoder + decoder)
 if config.gen_model == 'encoder_decoder':
@@ -97,8 +113,7 @@ if not(config.IMG_SIZE == 256 or config.IMG_SIZE == 128):
 
 #%% Prepara as pastas
 
-# base_root = "../"
-base_root = ""
+
 
 ### Prepara o nome da pasta que vai salvar o resultado dos experimentos
 experiment_root = base_root + 'Experimentos/'
@@ -198,7 +213,6 @@ def load_image_test(image_file):
     input_image = normalize(input_image)
     return input_image
 
-
 #%% DEFINIÇÃO DAS LOSSES
 
 '''
@@ -264,11 +278,11 @@ def loss_wgangp_discriminator(disc, disc_real_output, disc_generated_output, rea
     return total_disc_loss, real_loss, fake_loss
 
 def gradient_penalty(disc, real_img, generated_img):
-    """ 
+    ''' 
     Calculates the gradient penalty.
     This loss is calculated on an interpolated image and added to the discriminator loss.
     From: https://colab.research.google.com/github/keras-team/keras-io/blob/master/examples/generative/ipynb/wgan_gp.ipynb#scrollTo=LhzOUkhYSOPG
-    """
+    '''
     # Get the interpolated image
     alpha = tf.random.normal([config.BATCH_SIZE, 1, 1, 1], 0.0, 1.0)
     diff = generated_img - real_img
@@ -287,12 +301,12 @@ def gradient_penalty(disc, real_img, generated_img):
     return gp
 
 def gradient_penalty_conditional(disc, real_img, generated_img, target):
-    """ 
+    ''' 
     Adapted to Conditional Discriminators
     Calculates the gradient penalty.
     This loss is calculated on an interpolated image and added to the discriminator loss.
     From: https://colab.research.google.com/github/keras-team/keras-io/blob/master/examples/generative/ipynb/wgan_gp.ipynb#scrollTo=LhzOUkhYSOPG
-    """
+    '''
     # Get the interpolated image
     alpha = tf.random.normal([config.BATCH_SIZE, 1, 1, 1], 0.0, 1.0)
     diff = generated_img - real_img
@@ -310,7 +324,6 @@ def gradient_penalty_conditional(disc, real_img, generated_img, target):
     gp = tf.reduce_mean((norm - 1.0) ** 2)
     return gp
 
-
 #%% FUNÇÕES DO TREINAMENTO
 
 '''
@@ -321,7 +334,7 @@ def train_step(generator, disc, input_image, target):
     with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
         
         gen_image = generator(input_image, training = True)
-        
+    
         disc_real = disc([input_image, target], training=True)
         disc_gen = disc([gen_image, target], training=True)
 
@@ -416,8 +429,6 @@ def fit(generator, disc, train_ds, first_epoch, epochs, test_ds):
 '''
 GERADOR SEPARADO EM ENCODER / DECODER
 '''
-    
-# Função para o encoder/decoder
 @tf.function
 def train_step_encdec(encoder, decoder, disc, input_image, target):
     with tf.GradientTape() as enc_tape, tf.GradientTape() as dec_tape, tf.GradientTape() as disc_tape:
@@ -551,6 +562,10 @@ elif config.gen_model == 'full_resnet_smooth':
     generator = net.VT_full_resnet_generator_smooth_disentangle(config.IMG_SIZE)
 elif config.gen_model == 'simple_decoder_smooth':
     generator = net.VT_full_simple_decoder_smooth_disentangle(config.IMG_SIZE)
+elif config.gen_model == 'transfer':
+    generator = transfer.transfer_model(config.IMG_SIZE, config.transfer_generator_path, config.transfer_generator_filename, 
+    config.transfer_middle_model, config.transfer_encoder_last_layer, config.transfer_decoder_first_layer, config.transfer_trainable,
+    config.transfer_disentangle, config.transfer_smooth_vector)
 elif config.gen_model == 'encoder_decoder':
     encoder = net.resnet_encoder(config.IMG_SIZE)
     decoder = net.resnet_decoder(config.IMG_SIZE)
@@ -615,7 +630,6 @@ if config.LOAD_CHECKPOINT:
     else:
         config.FIRST_EPOCH = 1
         
-        
 # Salva o gerador e o discriminador (principalmente para visualização)
 if config.USE_FULL_GENERATOR: 
     generator.save(model_folder+'ae_generator.h5')
@@ -624,10 +638,10 @@ else:
     decoder.save(model_folder+'ae_decoder.h5')
 disc.save(model_folder+'ae_discriminator.h5')
 
+
 #%% TREINAMENTO
 
 if config.FIRST_EPOCH <= config.EPOCHS:
-    
     # CONDIÇÕES PARA GERADOR ÚNICO
     if config.USE_FULL_GENERATOR: 
         fit(generator, disc, train_dataset, config.FIRST_EPOCH, config.EPOCHS, test_dataset)
@@ -660,9 +674,7 @@ if config.NUM_TEST_PRINTS > 0:
             utils.generate_save_images_gen(generator, img, result_test_folder, filename)
         else:
             utils.generate_save_images(encoder, decoder, img, result_test_folder, filename)
-        
         c = c + 1
-
 if config.QUIET_PLOT:
     plt.close("all")
         
@@ -701,15 +713,11 @@ f.write("LOAD_CHECKPOINT = " + str(config.LOAD_CHECKPOINT) + "\n")
 f.write("FIRST_EPOCH = " + str(config.FIRST_EPOCH) + "\n")
 f.write("NUM_TEST_PRINTS = " + str(config.NUM_TEST_PRINTS) + "\n")
 f.write("LAMBDA_GP = " + str(config.LAMBDA_GP) + "\n")
-# f.write("WGAN_NCRITIC = " + str(WGAN_NCRITIC) + "\n")
 f.write("\n")
 f.write("gen_model = " + str(config.gen_model) + "\n")
 f.write("disc_model = " + str(config.disc_model) + "\n")
 f.write("loss_type = " + str(config.loss_type) + "\n")
 f.write("USE_FULL_GENERATOR = " + str(config.USE_FULL_GENERATOR) + "\n")
-# f.write("\n")
-# f.write("Tempo usado para {} épocas foi de {:.2f} min ({:.2f} sec)\n".format(EPOCHS, dt/60, dt))
 
 f.close()
-
 wandb.finish()
