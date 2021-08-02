@@ -2,6 +2,8 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+import numpy as np
+from sklearn.metrics import accuracy_score as accuracy
 
 def generate_images(encoder, decoder, img_input):
     latent = encoder(img_input, training=True)
@@ -75,7 +77,6 @@ def generate_save_images_gen(generator, img_input, save_destination, filename):
 
     return f
 
-
 def plot_losses(loss_df, plot_ma = True, window = 100):
     
     # Plota o principal
@@ -97,6 +98,41 @@ def plot_losses(loss_df, plot_ma = True, window = 100):
     f.show()
     
     return f
+
+def evaluate_accuracy(generator, discriminator, test_ds, y_real, y_pred):
+    
+    # Gera uma imagem-base
+    for img_real in test_ds.take(1):
+        target = img_real
+
+        # A partir dela, gera uma imagem sintética
+        img_fake = generator(img_real, training = True)
+
+        # Avalia ambas
+        disc_real = discriminator([img_real, target], training = True)
+        disc_fake = discriminator([img_fake, target], training = True)
+
+        # Para o caso de ser um discriminador PatchGAN, tira a média
+        disc_real = np.mean(disc_real)
+        disc_fake = np.mean(disc_fake)
+
+        # Aplica o threshold
+        disc_real = 1 if disc_real > 0.5 else 0
+        disc_fake = 1 if disc_fake > 0.5 else 0
+
+        # Acrescenta a observação real como y_real = 1
+        y_real.append(1)
+        y_pred.append(disc_real)
+
+        # Acrescenta a observação fake como y_real = 0
+        y_real.append(0)
+        y_pred.append(disc_fake)
+
+        # Calcula a acurácia
+        acc = accuracy(y_real, y_pred)
+
+        return y_real, y_pred, acc
+
 
 #%% TRATAMENTO DE EXCEÇÕES
     
