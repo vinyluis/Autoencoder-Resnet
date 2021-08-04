@@ -4,7 +4,6 @@
 import os
 import time
 from matplotlib import pyplot as plt
-import seaborn as sns
 import pandas as pd
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
@@ -14,6 +13,12 @@ import tensorflow as tf
 import networks as net
 import utils
 import transferlearning as transfer
+
+#%% Weights & Biases
+
+import wandb
+# wandb.init(project='autoencoder_resnet', entity='vinyluis', mode="disabled")
+wandb.init(project='autoencoder_resnet', entity='vinyluis', mode="online")
 
 #%% Config Tensorflow
 
@@ -31,11 +36,6 @@ print(tf.config.list_physical_devices('GPU'))
 # print(sess)
 print("")
 
-#%% Weights & Biases
-
-import wandb
-# wandb.init(project='autoencoder_resnet', entity='vinyluis', mode="disabled")
-wandb.init(project='autoencoder_resnet', entity='vinyluis', mode="online")
 
 #%% HIPERPARÂMETROS
 config = wandb.config # Salva os hiperparametros no Weights & Biases também
@@ -68,17 +68,17 @@ config.KEEP_CHECKPOINTS = 2
 #%% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp = "14B"
+config.exp = "15D"
 
 # Modelo do gerador. Possíveis = 'resnet', 'resnet_vetor', 'encoder_decoder', 'full_resnet', 'simple_decoder', 
 # 'full_resnet_dis', 'simple_decoder_dis', 'full_resnet_smooth', 'simple_decoder_smooth', 'transfer'
-config.gen_model = 'full_resnet'
+config.gen_model = 'simple_decoder'
 
 # Modelo do discriminador. Possíveis = 'patchgan', 'stylegan_adapted', 'stylegan'
 config.disc_model = 'stylegan'
 
-# Tipo de loss. Possíveis = 'patchganloss', 'wgan', 'wgan-gp', 'l1'
-config.loss_type = 'patchganloss'
+# Tipo de loss. Possíveis = 'patchganloss', 'wgan', 'wgan-gp', 'l1', 'l2'
+config.loss_type = 'l1'
 
 # Faz a configuração do transfer learning, se for selecionado
 if config.gen_model == 'transfer':
@@ -109,10 +109,12 @@ if config.loss_type == 'patchganloss':
     if not(config.disc_model == 'patchgan' or config.disc_model == 'patchgan_adapted'
             or  config.disc_model == 'stylegan_adapted' or  config.disc_model == 'stylegan'):
         raise utils.LossCompatibilityError(config.loss_type, config.disc_model)
-if config.loss_type == 'wgan' or config.loss_type == 'wgan-gp':
+elif config.loss_type == 'wgan' or config.loss_type == 'wgan-gp':
     config.ADAM_BETA_1 = 0.9
     if not(config.disc_model == 'stylegan'):
         raise utils.LossCompatibilityError(config.loss_type, config.disc_model)
+else:
+    config.ADAM_BETA_1 = 0.9
 
 # Valida o IMG_SIZE
 if not(config.IMG_SIZE == 256 or config.IMG_SIZE == 128):
@@ -228,13 +230,16 @@ L2: Idem, com a loss L2
 def loss_l1_generator(gen_output, target):
     gan_loss = 0
     l1_loss = tf.reduce_mean(tf.abs(target - gen_output)) # mean absolute error
-    total_gen_loss = l1_loss
+    total_gen_loss = config.LAMBDA * l1_loss
     return total_gen_loss, gan_loss, l1_loss
 
 def loss_l2_generator(gen_output, target):
+    MSE = tf.keras.losses.MeanSquaredError()
     gan_loss = 0
-    l2_loss = tf.keras.losses.MeanSquaredError(target - gen_output) # mean squared error
-    total_gen_loss = l2_loss
+    l2_loss = MSE(target, gen_output) # mean squared error
+    # Usando a loss desse jeito, valores entre 0 e 1 serão subestimados. Deve-se tirar a raiz do MSE
+    l2_loss = tf.sqrt(l2_loss) # RMSE
+    total_gen_loss = config.LAMBDA * l2_loss
     return total_gen_loss, gan_loss, l2_loss
 
 '''
@@ -417,7 +422,7 @@ def fit(generator, disc, train_ds, first_epoch, epochs, test_ds):
             if config.QUIET_PLOT:
                 plt.close(fig)
 
-        print("Epoch: ", epoch)
+        print(utils.get_time_string(), " - Epoch: ", epoch)
         
         # Train
         for n, input_image in train_ds.enumerate():
@@ -532,7 +537,7 @@ def fit_encdec(encoder, decoder, disc, train_ds, first_epoch, epochs, test_ds):
             if config.QUIET_PLOT:
                 plt.close(fig)
 
-        print("Epoch: ", epoch)
+        print(utils.get_time_string(), " - Epoch: ", epoch)
         
         # Train
         for n, input_image in train_ds.enumerate():
@@ -582,9 +587,6 @@ def train_step_nodisc(generator, input_image, target):
     with tf.GradientTape() as gen_tape:
         
         gen_image = generator(input_image, training = True)
-    
-        # disc_real = disc([input_image, target], training=True)
-        # disc_gen = disc([gen_image, target], training=True)
 
         if config.loss_type == 'l1':
             gen_loss, gen_gan_loss, gen_l1_loss = loss_l1_generator(gen_image, target)
@@ -592,7 +594,7 @@ def train_step_nodisc(generator, input_image, target):
             disc_real_loss = 0
             disc_fake_loss = 0
 
-        if config.loss_type == 'l2':
+        elif config.loss_type == 'l2':
             gen_loss, gen_gan_loss, gen_l1_loss = loss_l2_generator(gen_image, target)
             disc_loss = 0
             disc_real_loss = 0
@@ -640,7 +642,7 @@ def fit_nodisc(generator, train_ds, first_epoch, epochs, test_ds):
             if config.QUIET_PLOT:
                 plt.close(fig)
 
-        print("Epoch: ", epoch)
+        print(utils.get_time_string(), " - Epoch: ", epoch)
         
         # Train
         for n, input_image in train_ds.enumerate():
@@ -649,15 +651,11 @@ def fit_nodisc(generator, train_ds, first_epoch, epochs, test_ds):
             target = input_image
             gen_loss, disc_loss, gen_gan_loss, gen_l1_loss, disc_real_loss, disc_fake_loss = train_step_nodisc(generator, input_image, target)
 
-           # Cálculo da acurácia
-            y_real, y_pred, acc = utils.evaluate_accuracy(generator, disc, test_ds, y_real, y_pred)
-
             # Acrescenta a loss no arquivo
             loss_df = loss_df.append({"Loss G": gen_loss.numpy(), "Loss D" : disc_loss.numpy()}, ignore_index = True)
             # Log as métricas no wandb 
             wandb.log({ 'gen_loss': gen_loss.numpy(), 'gen_gan_loss': gen_gan_loss.numpy(), 'gen_l1_loss': gen_l1_loss.numpy(),
-                        'disc_loss': disc_loss.numpy(), 'disc_real_loss': disc_real_loss.numpy(), 'disc_fake_loss': disc_fake_loss.numpy(),
-                        'test_accuracy': acc})
+                        'disc_loss': disc_loss.numpy(), 'disc_real_loss': disc_real_loss.numpy(), 'disc_fake_loss': disc_fake_loss.numpy()})
 
             # Printa pontinhos a cada 100. A cada 100 pontinhos, pula a linha
             if (n+1) % 100 == 0:
@@ -751,13 +749,13 @@ if config.ADVERSARIAL:
 
 # Prepara os inputs
 train_dataset = tf.data.Dataset.list_files(train_folder+'*/*.jpg')
-train_size = len(list(train_dataset))
+config.TRAIN_SIZE = len(list(train_dataset))
 train_dataset = train_dataset.map(load_image_train)
 train_dataset = train_dataset.shuffle(config.BUFFER_SIZE)
 train_dataset = train_dataset.batch(config.BATCH_SIZE)
 
 test_dataset = tf.data.Dataset.list_files(test_folder+'*/*.jpg')
-test_size = len(list(test_dataset))
+config.TEST_SIZE = len(list(test_dataset))
 test_dataset = test_dataset.map(load_image_test)
 test_dataset = test_dataset.batch(config.BATCH_SIZE)
 
@@ -862,7 +860,8 @@ else:
     encoder.save(model_folder+'ae_encoder.h5')
     decoder.save(model_folder+'ae_decoder.h5')
 
-disc.save(model_folder+'ae_discriminator.h5')
+if config.ADVERSARIAL:
+    disc.save(model_folder+'ae_discriminator.h5')
 
 # Salva os hiperparametros utilizados num arquivo txt
 f = open(experiment_folder + "parameters.txt","w+")

@@ -3,7 +3,49 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 import numpy as np
+from datetime import datetime
+from datetime import timedelta
+
 from sklearn.metrics import accuracy_score as accuracy
+
+# Prepara a string de data e hora conforme necessário
+def get_time_string(mode = "complete", days_offset = 0):
+    
+    #horário atual
+    now = datetime.now()
+    now = now + timedelta(days = days_offset) # adiciona um offset de x dias
+    yr = str(now.year)
+    mt = str(now.month)
+    dy = str(now.day)
+    
+    if(len(mt)==1):
+        mt = "0" + mt
+    
+    if(len(dy)==1):
+        dy = "0" + dy
+    
+    m = str(now.minute)
+    h = str(now.hour)
+    s = str(now.second)
+    
+    if(len(m)==1):
+        m = "0" + m
+    if(len(h)==1):
+        h = "0" + h
+    if(len(s)==1):
+        s = "0" + s
+    
+    if(mode == "complete"):
+        st = dy + "-" + mt + "-" + yr + " " + h + ":" + m + ":" + s
+        return st
+    
+    if(mode == "normal"):
+        st = dy + "-" + mt + "-" + yr
+        return st
+    
+    if(mode == "file"):
+        st = yr+mt+dy
+        return st
 
 def generate_images(encoder, decoder, img_input):
     latent = encoder(img_input, training=True)
@@ -99,7 +141,7 @@ def plot_losses(loss_df, plot_ma = True, window = 100):
     
     return f
 
-def evaluate_accuracy(generator, discriminator, test_ds, y_real, y_pred):
+def evaluate_accuracy(generator, discriminator, test_ds, y_real, y_pred, window = 100):
     
     # Gera uma imagem-base
     for img_real in test_ds.take(1):
@@ -127,9 +169,12 @@ def evaluate_accuracy(generator, discriminator, test_ds, y_real, y_pred):
         # Acrescenta a observação fake como y_real = 0
         y_real.append(0)
         y_pred.append(disc_fake)
-
-        # Calcula a acurácia
-        acc = accuracy(y_real, y_pred)
+        
+        # Calcula a acurácia pela janela
+        if len(y_real) > window:
+            acc = accuracy(y_real[-window:], y_pred[-window:])    
+        else:
+            acc = accuracy(y_real, y_pred)
 
         return y_real, y_pred, acc
 
