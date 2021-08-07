@@ -27,7 +27,7 @@ base_root = ""
 #%% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-exp = "16B"
+exp = "17B"
 
 # Código do experimento que será carregado como base do gerador
 base_model_exp = "15A"

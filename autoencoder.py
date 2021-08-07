@@ -50,7 +50,8 @@ config.LAMBDA_DISC = 1 # Ajuste de escala da loss do dicriminador
 config.BATCH_SIZE = 1
 config.BUFFER_SIZE = 150
 config.IMG_SIZE = 128
-config.LEARNING_RATE = 1e-5
+config.LEARNING_RATE_G = 1e-4
+config.LEARNING_RATE_D = 1e-6
 config.EPOCHS = 3
 config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
 # config.ADAM_BETA_1 = 0.5 #0.5 para a PatchGAN e 0.9 para a WGAN - Definido no código
@@ -68,17 +69,17 @@ config.KEEP_CHECKPOINTS = 2
 #%% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp = "15D"
+config.exp = "16E"
 
 # Modelo do gerador. Possíveis = 'resnet', 'resnet_vetor', 'encoder_decoder', 'full_resnet', 'simple_decoder', 
 # 'full_resnet_dis', 'simple_decoder_dis', 'full_resnet_smooth', 'simple_decoder_smooth', 'transfer'
 config.gen_model = 'simple_decoder'
 
 # Modelo do discriminador. Possíveis = 'patchgan', 'stylegan_adapted', 'stylegan'
-config.disc_model = 'stylegan'
+config.disc_model = 'patchgan'
 
 # Tipo de loss. Possíveis = 'patchganloss', 'wgan', 'wgan-gp', 'l1', 'l2'
-config.loss_type = 'l1'
+config.loss_type = 'patchganloss'
 
 # Faz a configuração do transfer learning, se for selecionado
 if config.gen_model == 'transfer':
@@ -144,8 +145,8 @@ train_folder = dataset_folder+'train/'
 test_folder = dataset_folder+'val/'
 
 ### Pastas dos resultados
-result_folder = experiment_folder + 'results-train-autoencoder/'
-result_test_folder = experiment_folder + 'results-test-autoencoder/'
+result_folder = experiment_folder + 'results-train/'
+result_test_folder = experiment_folder + 'results-test/'
 
 model_folder = experiment_folder + 'model/'
 
@@ -737,13 +738,13 @@ if config.ADVERSARIAL:
 
 # Define os otimizadores
 if config.USE_FULL_GENERATOR: 
-    generator_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE, beta_1=config.ADAM_BETA_1)
+    generator_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE_G, beta_1=config.ADAM_BETA_1)
 else:
-    encoder_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE, beta_1=config.ADAM_BETA_1)
-    decoder_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE, beta_1=config.ADAM_BETA_1)
+    encoder_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE_G, beta_1=config.ADAM_BETA_1)
+    decoder_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE_G, beta_1=config.ADAM_BETA_1)
 
 if config.ADVERSARIAL:  
-    discriminator_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE, beta_1=config.ADAM_BETA_1)
+    discriminator_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE_D, beta_1=config.ADAM_BETA_1)
 
 #%% EXECUÇÃO
 
@@ -871,7 +872,8 @@ f.write("BUFFER_SIZE = " + str(config.BUFFER_SIZE) + "\n")
 f.write("IMG_SIZE = " + str(config.IMG_SIZE) + "\n")
 f.write("EPOCHS = " + str(config.EPOCHS) + "\n")
 
-f.write("LEARNING_RATE = " + str(config.LEARNING_RATE) + "\n")
+f.write("LEARNING_RATE_G = " + str(config.LEARNING_RATE_G) + "\n")
+f.write("LEARNING_RATE_D = " + str(config.LEARNING_RATE_D) + "\n")
 f.write("ADAM_BETA_1 = " + str(config.ADAM_BETA_1) + "\n")
 
 f.write("CHECKPOINT_EPOCHS = " + str(config.CHECKPOINT_EPOCHS) + "\n")
