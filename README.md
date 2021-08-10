@@ -1,4 +1,4 @@
-# Autoencoder-Resnet
+# Autoencoder Resnet
 Experimentos feitos para minha dissertação de mestrado usando um autoencoder baseado no gerador resnet da Pix2Pix
 
 ## Página do experimento
