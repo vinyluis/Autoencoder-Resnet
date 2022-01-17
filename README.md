@@ -1,5 +1,5 @@
-# Autoencoder-Resnet
-Experimentos feitos para minha dissertação de mestrado usando um autoencoder baseado no gerador resnet da Pix2Pix
+# Autoencoders
+Experimentos feitos para minha dissertação de mestrado usando um autoencoder baseado nos geradores ResNet e U-Net da Pix2Pix
 
 ## Página do experimento
 O experimento completo pode ser acessado em: 

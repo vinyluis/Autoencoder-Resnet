@@ -4,6 +4,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import tensorflow as tf
 tf.get_logger().setLevel('ERROR')
 import tensorflow_addons as tfa
+from tensorflow.keras.constraints import Constraint
+from tensorflow.keras import backend
 
 ## Tipo de normalização
 # norm_layer = tf.keras.layers.BatchNormalization
@@ -12,6 +14,23 @@ norm_layer = tfa.layers.InstanceNormalization
 ## Modo de inicialização dos pesos
 initializer = tf.random_normal_initializer(0., 0.02)
 
+#%% CLASSES AUXILIARES
+
+class ClipConstraint(Constraint):
+# clip model weights to a given hypercube
+# https://machinelearningmastery.com/how-to-code-a-wasserstein-generative-adversarial-network-wgan-from-scratch/
+
+    # set clip value when initialized
+    def __init__(self, clip_value):
+        self.clip_value = clip_value
+    
+    # clip model weights to hypercube
+    def __call__(self, weights):
+        return backend.clip(weights, -self.clip_value, self.clip_value)
+    
+    # get the config
+    def get_config(self):
+        return {'clip_value': self.clip_value}
 
 #%% BLOCOS 
 
@@ -1047,7 +1066,8 @@ def stylegan_discriminator(IMG_SIZE, constrained = False):
         Então "pula" para a sexta convolução, que já é originalmente de tamanho 256 x 256 e continua daí para a frente
     '''
     ## Restrições para o discriminador (usado na WGAN original)
-    constraint = tf.keras.constraints.MinMaxNorm(min_value = -0.01, max_value = 0.01)
+    # constraint = tf.keras.constraints.MinMaxNorm(min_value = -0.01, max_value = 0.01)
+    constraint = ClipConstraint(0.01)
     if constrained == False:
         constraint = None
 

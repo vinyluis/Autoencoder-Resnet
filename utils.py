@@ -178,7 +178,6 @@ def evaluate_accuracy(generator, discriminator, test_ds, y_real, y_pred, window 
 
         return y_real, y_pred, acc
 
-
 #%% TRATAMENTO DE EXCEÇÕES
     
 class GeneratorError(Exception):

@@ -1,4 +1,4 @@
-#%% INÍCIO
+## CÓDIGO PRINCIPAL DO AUTOENCODER RESNET
 
 ### Imports
 import os
@@ -37,7 +37,7 @@ print(tf.config.list_physical_devices('GPU'))
 print("")
 
 
-#%% HIPERPARÂMETROS
+#%% HIPERPARÂMETROS E CONFIGURAÇÕES
 config = wandb.config # Salva os hiperparametros no Weights & Biases também
 
 # Root do sistema
@@ -45,17 +45,18 @@ config = wandb.config # Salva os hiperparametros no Weights & Biases também
 base_root = ""
 
 # Parâmetros de treinamento
-config.LAMBDA = 100 # Efeito da Loss L1
+config.LAMBDA = 1000 # Efeito da Loss L1
 config.LAMBDA_DISC = 1 # Ajuste de escala da loss do dicriminador
-config.BATCH_SIZE = 1
+config.BATCH_SIZE = 8
 config.BUFFER_SIZE = 150
 config.IMG_SIZE = 128
-config.LEARNING_RATE_G = 1e-4
-config.LEARNING_RATE_D = 1e-6
+config.LEARNING_RATE_G = 1e-5
+config.LEARNING_RATE_D = 1e-5
 config.EPOCHS = 3
 config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
 # config.ADAM_BETA_1 = 0.5 #0.5 para a PatchGAN e 0.9 para a WGAN - Definido no código
 # config.FIRST_EPOCH = 1 # Definido em código, no checkpoint
+config.USE_CACHE = True
 
 # Parâmetros de plot
 config.QUIET_PLOT = True
@@ -69,17 +70,17 @@ config.KEEP_CHECKPOINTS = 2
 #%% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp = "16E"
+config.exp = "A-07"
 
 # Modelo do gerador. Possíveis = 'resnet', 'resnet_vetor', 'encoder_decoder', 'full_resnet', 'simple_decoder', 
 # 'full_resnet_dis', 'simple_decoder_dis', 'full_resnet_smooth', 'simple_decoder_smooth', 'transfer'
-config.gen_model = 'simple_decoder'
+config.gen_model = 'full_resnet'
 
 # Modelo do discriminador. Possíveis = 'patchgan', 'stylegan_adapted', 'stylegan'
-config.disc_model = 'patchgan'
+config.disc_model = 'stylegan'
 
 # Tipo de loss. Possíveis = 'patchganloss', 'wgan', 'wgan-gp', 'l1', 'l2'
-config.loss_type = 'patchganloss'
+config.loss_type = 'wgan-gp'
 
 # Faz a configuração do transfer learning, se for selecionado
 if config.gen_model == 'transfer':
@@ -138,7 +139,7 @@ if config.BATCH_SIZE != 1:
 experiment_folder += '/'
 
 ### Pastas do dataset
-dataset_folder = 'C:/Users/T-Gamer/OneDrive/Vinicius/01-Estudos/00_Datasets/celeba_hq/'
+dataset_folder = 'C:/Users/Vinicius/Datasets/celeba_hq/'
 # dataset_folder = 'C:/Users/Vinícius/OneDrive/Vinicius/01-Estudos/00_Datasets/celeba_hq/'
 
 train_folder = dataset_folder+'train/'
@@ -167,7 +168,6 @@ if not os.path.exists(model_folder):
     os.mkdir(model_folder)
     
 ### Pasta do checkpoint
-    
 checkpoint_dir = experiment_folder + 'checkpoints'
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
 
@@ -287,39 +287,48 @@ def loss_wgan_discriminator(disc_real_output, disc_generated_output):
     # Maximizar E(D(x_real)) - E(D(x_fake)) é equivalente a minimizar -(E(D(x_real)) - E(D(x_fake))) ou E(D(x_fake)) -E(D(x_real))
     fake_loss = tf.reduce_mean(disc_generated_output)
     real_loss = tf.reduce_mean(disc_real_output)
-    total_disc_loss = fake_loss - real_loss
+    total_disc_loss = -(real_loss - fake_loss)
     return total_disc_loss, real_loss, fake_loss
 
 '''
 Wasserstein GAN - Gradient Penalty (WGAN-GP): A WGAN tem uma forma muito bruta de assegurar a continuidade de Lipschitz, então
 os autores criaram o conceito de Gradient Penalty para manter essa condição de uma forma mais suave.
 - O gerador tem a MESMA loss da WGAN
-- O discriminador, em vez de ter seus pesos limitados pelo clipping, ganham uma penalidade de gradiente que deve ser calculada
+- O discriminador, em vez de ter seus pesos limitados pelo clipping, ganha uma penalidade de gradiente que deve ser calculada
 '''
 def loss_wgangp_generator(disc_generated_output, gen_output, target):
     return loss_wgan_generator(disc_generated_output, gen_output, target)
 
 def loss_wgangp_discriminator(disc, disc_real_output, disc_generated_output, real_img, generated_img, target):
-    total_disc_loss, real_loss, fake_loss = loss_wgan_discriminator(disc_real_output, disc_generated_output)
+    fake_loss = tf.reduce_mean(disc_generated_output)
+    real_loss = tf.reduce_mean(disc_real_output)
     gp = gradient_penalty_conditional(disc, real_img, generated_img, target)
-    total_disc_loss = total_disc_loss + config.LAMBDA_GP * gp
+    total_disc_loss = total_disc_loss = -(real_loss - fake_loss) + config.LAMBDA_GP * gp + (0.001 * tf.reduce_mean(disc_real_output**2))
     return total_disc_loss, real_loss, fake_loss
 
-def gradient_penalty(disc, real_img, generated_img):
+def gradient_penalty(discriminator, real_img, fake_img, training):
     ''' 
     Calculates the gradient penalty.
     This loss is calculated on an interpolated image and added to the discriminator loss.
     From: https://colab.research.google.com/github/keras-team/keras-io/blob/master/examples/generative/ipynb/wgan_gp.ipynb#scrollTo=LhzOUkhYSOPG
     '''
-    # Get the interpolated image
-    alpha = tf.random.normal([config.BATCH_SIZE, 1, 1, 1], 0.0, 1.0)
-    diff = generated_img - real_img
-    interpolated = real_img + alpha * diff
+    # Get the Batch Size
+    batch_size = real_img.shape[0]
+
+    # Calcula gamma
+    gamma = tf.random.uniform([batch_size, 1, 1, 1])
+
+    # Calcula a imagem interpolada
+    interpolated = real_img * gamma + fake_img * (1 - gamma)
 
     with tf.GradientTape() as gp_tape:
         gp_tape.watch(interpolated)
+
         # 1. Get the discriminator output for this interpolated image.
-        pred = disc(interpolated, training=True) # O discriminador usa duas imagens como entrada
+        if training == 'direct':
+            pred = discriminator(interpolated, training=True) # O discriminador usa duas imagens como entrada
+        elif training == 'progressive':
+            pred = discriminator(interpolated)
 
     # 2. Calculate the gradients w.r.t to this interpolated image.
     grads = gp_tape.gradient(pred, [interpolated])[0]
@@ -335,13 +344,18 @@ def gradient_penalty_conditional(disc, real_img, generated_img, target):
     This loss is calculated on an interpolated image and added to the discriminator loss.
     From: https://colab.research.google.com/github/keras-team/keras-io/blob/master/examples/generative/ipynb/wgan_gp.ipynb#scrollTo=LhzOUkhYSOPG
     '''
-    # Get the interpolated image
-    alpha = tf.random.normal([config.BATCH_SIZE, 1, 1, 1], 0.0, 1.0)
-    diff = generated_img - real_img
-    interpolated = real_img + alpha * diff
+    # Get the Batch Size
+    batch_size = real_img.shape[0]
+
+    # Calcula gamma
+    gamma = tf.random.uniform([batch_size, 1, 1, 1])
+
+    # Calcula a imagem interpolada
+    interpolated = real_img * gamma + generated_img * (1 - gamma)
     
     with tf.GradientTape() as gp_tape:
         gp_tape.watch(interpolated)
+        
         # 1. Get the discriminator output for this interpolated image.
         pred = disc([interpolated, target], training=True) # O discriminador usa duas imagens como entrada
 
@@ -412,12 +426,24 @@ def fit(generator, disc, train_ds, first_epoch, epochs, test_ds):
         
         # Plota e salva um exemplo
         for example_input in test_ds.take(1):
-            filename = "epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
+            filename = "test_epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
             fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
 
             # Loga a figura no wandb
-            s = "epoch {}".format(epoch-1)
-            wandbfig = wandb.Image(fig, caption="Epoch:{}".format(epoch-1))
+            s = "test epoch {}".format(epoch-1)
+            wandbfig = wandb.Image(fig, caption="Test Epoch:{}".format(epoch-1))
+            wandb.log({s: wandbfig})
+
+            if config.QUIET_PLOT:
+                plt.close(fig)
+
+        for example_input in train_ds.take(1):
+            filename = "train_epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
+            fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
+
+            # Loga a figura no wandb
+            s = "train epoch {}".format(epoch-1)
+            wandbfig = wandb.Image(fig, caption="Train Epoch:{}".format(epoch-1))
             wandb.log({s: wandbfig})
 
             if config.QUIET_PLOT:
@@ -465,7 +491,6 @@ def fit(generator, disc, train_ds, first_epoch, epochs, test_ds):
     dt = time.time() - t0
     print ('Tempo usado para {} épocas foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))  
    
-
 '''
 GERADOR SEPARADO EM ENCODER / DECODER
 '''
@@ -527,12 +552,24 @@ def fit_encdec(encoder, decoder, disc, train_ds, first_epoch, epochs, test_ds):
         
         # Plota e salva um exemplo
         for example_input in test_ds.take(1):
-            filename = "epoch_" + str(epoch).zfill(len(str(config.EPOCHS))) + ".jpg"
-            fig = utils.generate_save_images(encoder, decoder, example_input, result_folder, filename)
+            filename = "test_epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
+            fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
 
             # Loga a figura no wandb
-            s = "epoch {}".format(epoch -1)
-            wandbfig = wandb.Image(fig, caption="Epoch:{}".format(epoch-1))
+            s = "test epoch {}".format(epoch-1)
+            wandbfig = wandb.Image(fig, caption="Test Epoch:{}".format(epoch-1))
+            wandb.log({s: wandbfig})
+
+            if config.QUIET_PLOT:
+                plt.close(fig)
+
+        for example_input in train_ds.take(1):
+            filename = "train_epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
+            fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
+
+            # Loga a figura no wandb
+            s = "train epoch {}".format(epoch-1)
+            wandbfig = wandb.Image(fig, caption="Train Epoch:{}".format(epoch-1))
             wandb.log({s: wandbfig})
 
             if config.QUIET_PLOT:
@@ -612,7 +649,6 @@ def train_step_nodisc(generator, input_image, target):
     
     return (gen_loss, disc_loss, gen_gan_loss, gen_l1_loss, disc_real_loss, disc_fake_loss)
 
-
 def fit_nodisc(generator, train_ds, first_epoch, epochs, test_ds):
     
     # Lê arquivo com as losses
@@ -632,12 +668,24 @@ def fit_nodisc(generator, train_ds, first_epoch, epochs, test_ds):
         
         # Plota e salva um exemplo
         for example_input in test_ds.take(1):
-            filename = "epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
+            filename = "test_epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
             fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
 
             # Loga a figura no wandb
-            s = "epoch {}".format(epoch-1)
-            wandbfig = wandb.Image(fig, caption="Epoch:{}".format(epoch-1))
+            s = "test epoch {}".format(epoch-1)
+            wandbfig = wandb.Image(fig, caption="Test Epoch:{}".format(epoch-1))
+            wandb.log({s: wandbfig})
+
+            if config.QUIET_PLOT:
+                plt.close(fig)
+
+        for example_input in train_ds.take(1):
+            filename = "train_epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
+            fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
+
+            # Loga a figura no wandb
+            s = "train epoch {}".format(epoch-1)
+            wandbfig = wandb.Image(fig, caption="Train Epoch:{}".format(epoch-1))
             wandb.log({s: wandbfig})
 
             if config.QUIET_PLOT:
@@ -681,7 +729,6 @@ def fit_nodisc(generator, train_ds, first_epoch, epochs, test_ds):
     dt = time.time() - t0
     print ('Tempo usado para {} épocas foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))  
    
-
 
 #%% TESTA O CÓDIGO E MOSTRA UMA IMAGEM DO DATASET
 
@@ -752,6 +799,8 @@ if config.ADVERSARIAL:
 train_dataset = tf.data.Dataset.list_files(train_folder+'*/*.jpg')
 config.TRAIN_SIZE = len(list(train_dataset))
 train_dataset = train_dataset.map(load_image_train)
+if config.USE_CACHE:
+    train_dataset = train_dataset.cache()
 train_dataset = train_dataset.shuffle(config.BUFFER_SIZE)
 train_dataset = train_dataset.batch(config.BATCH_SIZE)
 
