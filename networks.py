@@ -152,21 +152,22 @@ def resnet_downsample_bottleneck_block(input_tensor, filters):
     return x
 
 
-def upsample(x, filters):
+def upsample(x, filters, kernel_size = (3, 3), apply_dropout = False):
     # Reconstrução da imagem, baseada na Pix2Pix / CycleGAN
-    x = tf.keras.layers.Conv2DTranspose(filters = filters, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    x = tf.keras.layers.Conv2DTranspose(filters = filters, kernel_size = kernel_size, strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
     x = norm_layer()(x)
+    if apply_dropout:
+        x = tf.keras.layers.Dropout(0.5)(x)
     x = tf.keras.layers.ReLU()(x)
-    
     return x
 
 
-def downsample(x, filters):
+def downsample(x, filters, kernel_size = (3, 3), apply_norm = True):
     # Reconstrução da imagem, baseada na Pix2Pix / CycleGAN    
-    x = tf.keras.layers.Conv2D(filters = filters, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
+    x = tf.keras.layers.Conv2D(filters = filters, kernel_size = kernel_size, strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    if apply_norm:
+        x = norm_layer()(x)
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
     return x
 
 
@@ -197,7 +198,7 @@ def simple_downsample(x, scale = 2):
     return x
 
 
-#%%
+#%% MODELOS CUSTOMIZADOS
 
 def VT_full_resnet_generator(IMG_SIZE):
 
@@ -390,7 +391,7 @@ def VT_full_resnet_generator_disentangled(IMG_SIZE):
     x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (3, 3) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
     x = tf.keras.layers.Activation('tanh')(x)
 
-    print(x.shape)
+    # print(x.shape)
 
     # Cria o modelo
     return tf.keras.Model(inputs = inputs, outputs = x)
@@ -506,7 +507,7 @@ def VT_full_resnet_generator_smooth_disentangle(IMG_SIZE):
     x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (3, 3) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
     x = tf.keras.layers.Activation('tanh')(x)
 
-    print(x.shape)
+    # print(x.shape)
 
     # Cria o modelo
     return tf.keras.Model(inputs = inputs, outputs = x)
@@ -736,7 +737,49 @@ def VT_simple_decoder_smooth_disentangle(IMG_SIZE):
     return tf.keras.Model(inputs = inputs, outputs = x)
 
 
-#%% MODELOS ORIGINAIS
+#%% GERADORES
+
+def unet_generator(IMG_SIZE):
+
+    '''
+    Versão original do gerador U-Net utilizado nos papers Pix2Pix e CycleGAN
+    '''
+
+    # Inicializa a rede
+    inputs = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, 3])
+    x = inputs
+
+    # Downsample (descida)
+    # Para cada descida, salva a saída como uma skip connection
+    if IMG_SIZE == 256:
+        filters_down = [64, 128, 256, 512, 512, 512, 512, 512]
+        norm_down = [False, True, True, True, True, True, True, True]
+    elif IMG_SIZE == 128:
+        filters_down = [64, 128, 256, 512, 512, 512, 512]
+        norm_down = [False, True, True, True, True, True, True]
+    skips = []
+    for filter, norm  in zip(filters_down, norm_down):
+        x = downsample(x, filter, kernel_size = (4, 4), apply_norm = norm)
+        skips.append(x)
+
+    # Upsample (subida)
+    # Para cada subida, somar a saída da camada com uma skip connection
+    if IMG_SIZE == 256:
+        filters_up = [512, 512, 512, 512, 256, 128, 64]
+        dropout_up = [True, True, True, False, False, False, False]
+    elif IMG_SIZE == 128:
+        filters_up = [512, 512, 512, 256, 128, 64]
+        dropout_up = [True, True, True, False, False, False]
+    skips = skips[-2::-1] # Inverte as skip connections, e retira a última
+    for filter, dropout, skip in zip(filters_up, dropout_up, skips):
+        x = upsample(x, filter, kernel_size = (4,4), apply_dropout = dropout)
+        x = tf.keras.layers.Concatenate()([x, skip])
+
+    # Última camada
+    x = tf.keras.layers.Conv2DTranspose(3, 4, strides=2, padding='same', kernel_initializer=initializer, activation='tanh')(x)
+
+    return tf.keras.Model(inputs=inputs, outputs=x)
+
 
 def resnet_encoder(IMG_SIZE):
     
@@ -812,7 +855,7 @@ def resnet_decoder(IMG_SIZE):
 def resnet_generator(IMG_SIZE):
     
     '''
-    Versão original do gerador utilizado nos papers Pix2Pix e CycleGAN
+    Versão original do gerador ResNet utilizado nos papers Pix2Pix e CycleGAN
     '''
     
     # Inicializa a rede
@@ -937,11 +980,13 @@ def resnet_adapted_generator(IMG_SIZE):
     x = tf.keras.layers.Conv2D(filters = 3, kernel_size = (7, 7) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
     x = tf.keras.layers.Activation('tanh')(x)
     
-    print(x.shape)
+    # print(x.shape)
 
     # Cria o modelo
     return tf.keras.Model(inputs = inputs, outputs = x)
 
+
+#%% DISCRIMINADORES
 
 def patchgan_discriminator(IMG_SIZE):
     
@@ -1145,3 +1190,30 @@ def stylegan_discriminator(IMG_SIZE, constrained = False):
     x = tf.keras.layers.Dense(1, kernel_constraint=constraint)(x)
     
     return tf.keras.Model(inputs=[inp, tar], outputs=x)
+
+
+#%% TESTA
+
+#  Só roda quando este arquivo for chamado como main
+if __name__ == "__main__":
+
+    # Testa os shapes dos modelos
+    for IMG_SIZE in [256, 128]:
+        print(f"\n---- IMG_SIZE = {IMG_SIZE}")
+        print("Geradores:")
+        print("U-Net                                ", unet_generator(IMG_SIZE).output.shape)
+        print("ResNet                               ", resnet_generator(IMG_SIZE).output.shape)
+        print("ResNet adaptado                      ", resnet_adapted_generator(IMG_SIZE).output.shape)
+        print("ResNet encoder                       ", resnet_encoder(IMG_SIZE).output.shape)
+        print("ResNet decoder                       ", resnet_decoder(IMG_SIZE).output.shape)
+        print("Full ResNet                          ", VT_full_resnet_generator(IMG_SIZE).output.shape)
+        print("Full ResNet Disentangled             ", VT_full_resnet_generator_disentangled(IMG_SIZE).output.shape)
+        print("Full ResNet Smooth Disentangle       ", VT_full_resnet_generator_smooth_disentangle(IMG_SIZE).output.shape)
+        print("Simple Decoder                       ", VT_simple_decoder(IMG_SIZE).output.shape)
+        print("Simple Decoder Disentangled          ", VT_simple_decoder_disentangled(IMG_SIZE).output.shape)
+        print("Simple Decoder Smooth Disentangle    ", VT_simple_decoder_smooth_disentangle(IMG_SIZE).output.shape)
+        print("Discriminadores:")
+        print("PatchGAN                             ", patchgan_discriminator(IMG_SIZE).output.shape)
+        print("ProGAN adapted                       ", stylegan_discriminator_patchgan(IMG_SIZE).output.shape)
+        print("ProGAN                               ", stylegan_discriminator(IMG_SIZE).output.shape)
+

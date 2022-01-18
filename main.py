@@ -1,4 +1,6 @@
-## CÓDIGO PRINCIPAL DO AUTOENCODER RESNET
+## Main code for Autoencoders
+## Created for the Master's degree dissertation
+## Vinícius Trevisan 2020-2022
 
 ### Imports
 import os
@@ -17,23 +19,14 @@ import transferlearning as transfer
 #%% Weights & Biases
 
 import wandb
-# wandb.init(project='autoencoder_resnet', entity='vinyluis', mode="disabled")
-wandb.init(project='autoencoder_resnet', entity='vinyluis', mode="online")
+wandb.init(project='autoencoders', entity='vinyluis', mode="disabled")
+# wandb.init(project='autoencoders', entity='vinyluis', mode="online")
 
 #%% Config Tensorflow
-
-# Evita o erro "Failed to get convolution algorithm. This is probably because cuDNN failed to initialize"
-# tfconfig = tf.compat.v1.ConfigProto()
-# tfconfig.gpu_options.allow_growth = True
-# session = tf.compat.v1.InteractiveSession(config=tfconfig)
 
 # Verifica se a GPU está disponível:
 print("---- VERIFICA SE A GPU ESTÁ DISPONÍVEL:")
 print(tf.config.list_physical_devices('GPU'))
-# Verifica se a GPU está sendo usada na sessão
-# print("---- VERIFICA SE A GPU ESTÁ SENDO USADA NA SESSÃO:")
-# sess = tf.compat.v1.Session(config=tf.compat.v1.ConfigProto(log_device_placement=True))
-# print(sess)
 print("")
 
 
@@ -70,17 +63,17 @@ config.KEEP_CHECKPOINTS = 2
 #%% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp = "A-07"
+config.exp = ""
 
-# Modelo do gerador. Possíveis = 'resnet', 'resnet_vetor', 'encoder_decoder', 'full_resnet', 'simple_decoder', 
-# 'full_resnet_dis', 'simple_decoder_dis', 'full_resnet_smooth', 'simple_decoder_smooth', 'transfer'
-config.gen_model = 'full_resnet'
+# Modelo do gerador. Possíveis = 'unet', 'resnet', 'resnet_vetor', 'encoder_decoder', 'full_resnet', 'simple_decoder', 
+# 'full_resnet_dis', 'simple_decoder_dis', 'full_resnet_smooth', 'simple_decoder_smooth', 'transfer',
+config.gen_model = 'unet'
 
 # Modelo do discriminador. Possíveis = 'patchgan', 'stylegan_adapted', 'stylegan'
-config.disc_model = 'stylegan'
+config.disc_model = 'patchgan'
 
 # Tipo de loss. Possíveis = 'patchganloss', 'wgan', 'wgan-gp', 'l1', 'l2'
-config.loss_type = 'wgan-gp'
+config.loss_type = 'patchganloss'
 
 # Faz a configuração do transfer learning, se for selecionado
 if config.gen_model == 'transfer':
@@ -132,15 +125,10 @@ experiment_folder += 'gen_'
 experiment_folder += config.gen_model
 experiment_folder += '_disc_'
 experiment_folder += config.disc_model
-#experiment_folder += '_loss_'
-#experiment_folder += loss_type
-if config.BATCH_SIZE != 1:
-    experiment_folder += '_BATCH_' + str(config.BATCH_SIZE)
 experiment_folder += '/'
 
 ### Pastas do dataset
-dataset_folder = 'C:/Users/Vinicius/Datasets/celeba_hq/'
-# dataset_folder = 'C:/Users/Vinícius/OneDrive/Vinicius/01-Estudos/00_Datasets/celeba_hq/'
+dataset_folder = '../../00_Datasets/celeba_hq/'
 
 train_folder = dataset_folder+'train/'
 test_folder = dataset_folder+'val/'
@@ -730,14 +718,6 @@ def fit_nodisc(generator, train_ds, first_epoch, epochs, test_ds):
     print ('Tempo usado para {} épocas foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))  
    
 
-#%% TESTA O CÓDIGO E MOSTRA UMA IMAGEM DO DATASET
-
-inp = load(train_folder+'/male/000016.jpg')
-# casting to int for matplotlib to show the image
-if not config.QUIET_PLOT:
-    plt.figure()
-    plt.imshow(inp/255.0)
-
 #%% PREPARAÇÃO DOS MODELOS
 
 # Define se irá ter a restrição de tamanho de peso da WGAN (clipping)
@@ -746,7 +726,9 @@ if config.loss_type == 'wgan':
         constrained = True
 
 # CRIANDO O MODELO DE GERADOR
-if config.gen_model == 'resnet':
+if config.gen_model == 'unet':
+    generator = net.unet_generator(config.IMG_SIZE)
+elif config.gen_model == 'resnet':
     generator = net.resnet_generator(config.IMG_SIZE)
 elif config.gen_model == 'resnet_vetor': 
     generator = net.resnet_adapted_generator(config.IMG_SIZE)
@@ -913,28 +895,4 @@ else:
 if config.ADVERSARIAL:
     disc.save(model_folder+'ae_discriminator.h5')
 
-# Salva os hiperparametros utilizados num arquivo txt
-f = open(experiment_folder + "parameters.txt","w+")
-f.write("LAMBDA = " + str(config.LAMBDA) + "\n")
-f.write("BATCH_SIZE = " + str(config.BATCH_SIZE) + "\n")
-f.write("BUFFER_SIZE = " + str(config.BUFFER_SIZE) + "\n")
-f.write("IMG_SIZE = " + str(config.IMG_SIZE) + "\n")
-f.write("EPOCHS = " + str(config.EPOCHS) + "\n")
-
-f.write("LEARNING_RATE_G = " + str(config.LEARNING_RATE_G) + "\n")
-f.write("LEARNING_RATE_D = " + str(config.LEARNING_RATE_D) + "\n")
-f.write("ADAM_BETA_1 = " + str(config.ADAM_BETA_1) + "\n")
-
-f.write("CHECKPOINT_EPOCHS = " + str(config.CHECKPOINT_EPOCHS) + "\n")
-f.write("LOAD_CHECKPOINT = " + str(config.LOAD_CHECKPOINT) + "\n")
-f.write("FIRST_EPOCH = " + str(config.FIRST_EPOCH) + "\n")
-f.write("NUM_TEST_PRINTS = " + str(config.NUM_TEST_PRINTS) + "\n")
-f.write("LAMBDA_GP = " + str(config.LAMBDA_GP) + "\n")
-f.write("\n")
-f.write("gen_model = " + str(config.gen_model) + "\n")
-f.write("disc_model = " + str(config.disc_model) + "\n")
-f.write("loss_type = " + str(config.loss_type) + "\n")
-f.write("USE_FULL_GENERATOR = " + str(config.USE_FULL_GENERATOR) + "\n")
-
-f.close()
 wandb.finish()
