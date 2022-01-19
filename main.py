@@ -7,6 +7,7 @@ import os
 import time
 from matplotlib import pyplot as plt
 import pandas as pd
+from math import ceil
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
 import tensorflow as tf
@@ -29,12 +30,10 @@ print("---- VERIFICA SE A GPU ESTÁ DISPONÍVEL:")
 print(tf.config.list_physical_devices('GPU'))
 print("")
 
-
 #%% HIPERPARÂMETROS E CONFIGURAÇÕES
 config = wandb.config # Salva os hiperparametros no Weights & Biases também
 
 # Root do sistema
-# base_root = "../"
 base_root = ""
 
 # Parâmetros de treinamento
@@ -69,7 +68,7 @@ config.exp = ""
 # 'full_resnet_dis', 'simple_decoder_dis', 'full_resnet_smooth', 'simple_decoder_smooth', 'transfer',
 config.gen_model = 'unet'
 
-# Modelo do discriminador. Possíveis = 'patchgan', 'stylegan_adapted', 'stylegan'
+# Modelo do discriminador. Possíveis = 'patchgan', 'progan_adapted', 'progan'
 config.disc_model = 'patchgan'
 
 # Tipo de loss. Possíveis = 'patchganloss', 'wgan', 'wgan-gp', 'l1', 'l2'
@@ -102,12 +101,10 @@ else:
 if config.loss_type == 'patchganloss':
     config.ADAM_BETA_1 = 0.5
     if not(config.disc_model == 'patchgan' or config.disc_model == 'patchgan_adapted'
-            or  config.disc_model == 'stylegan_adapted' or  config.disc_model == 'stylegan'):
+            or  config.disc_model == 'progan_adapted' or  config.disc_model == 'progan'):
         raise utils.LossCompatibilityError(config.loss_type, config.disc_model)
 elif config.loss_type == 'wgan' or config.loss_type == 'wgan-gp':
     config.ADAM_BETA_1 = 0.9
-    if not(config.disc_model == 'stylegan'):
-        raise utils.LossCompatibilityError(config.loss_type, config.disc_model)
 else:
     config.ADAM_BETA_1 = 0.9
 
@@ -397,20 +394,16 @@ def train_step(generator, disc, input_image, target):
 # Função para o gerador
 def fit(generator, disc, train_ds, first_epoch, epochs, test_ds):
     
-    # Lê arquivo com as losses
-    try: 
-        loss_df = pd.read_csv(experiment_folder + "losses.csv")
-    except:
-        loss_df = pd.DataFrame(columns = ["Loss G", "Loss D"])
-    
     # Listas para o cálculo da acurácia
     y_real = []
     y_pred = []
 
-    # Inicia o loop de treinamento
-    t0 = time.time()
+    # Prepara a progression bar
+    progbar = tf.keras.utils.Progbar(int(ceil(config.TRAIN_SIZE / config.BATCH_SIZE)))
+
+    ########## LOOP DE TREINAMENTO ##########
     for epoch in range(first_epoch, epochs+1):
-        t1 = time.time()
+        t_start = time.time()
         
         # Plota e salva um exemplo
         for example_input in test_ds.take(1):
@@ -440,7 +433,12 @@ def fit(generator, disc, train_ds, first_epoch, epochs, test_ds):
         print(utils.get_time_string(), " - Epoch: ", epoch)
         
         # Train
+        i = 0 # Para o progress bar
         for n, input_image in train_ds.enumerate():
+
+            # Faz o update da Progress Bar
+            i += 1
+            progbar.update(i)
             
             # Step de treinamento
             target = input_image
@@ -449,35 +447,20 @@ def fit(generator, disc, train_ds, first_epoch, epochs, test_ds):
             # Cálculo da acurácia
             y_real, y_pred, acc = utils.evaluate_accuracy(generator, disc, test_ds, y_real, y_pred)
 
-            # Acrescenta a loss no arquivo
-            loss_df = loss_df.append({"Loss G": gen_loss.numpy(), "Loss D" : disc_loss.numpy()}, ignore_index = True)
             # Log as métricas no wandb 
             wandb.log({ 'gen_loss': gen_loss.numpy(), 'gen_gan_loss': gen_gan_loss.numpy(), 'gen_l1_loss': gen_l1_loss.numpy(),
                         'disc_loss': disc_loss.numpy(), 'disc_real_loss': disc_real_loss.numpy(), 'disc_fake_loss': disc_fake_loss.numpy(),
-                        'test_accuracy': acc})
-
-            # Printa pontinhos a cada 100. A cada 100 pontinhos, pula a linha
-            if (n+1) % 100 == 0:
-                print('.', end='')
-                if (n+1) % (100*100) == 0:
-                    print()      
+                        'test_accuracy': acc})   
             
-        # saving (checkpoint) the model every 20 epochs
+        # saving (checkpoint) the model every x epochs
         if (epoch) % config.CHECKPOINT_EPOCHS == 0:
             checkpoint.save(file_prefix = checkpoint_prefix)
             print("\nSalvando checkpoint...")
-            
-        # salva o arquivo de losses a cada época e plota como está ficando
-        loss_df.to_csv(experiment_folder + "losses.csv")
-        if not config.QUIET_PLOT:
-            utils.plot_losses(loss_df)
-        
-        dt = time.time() - t1
+
+        dt = time.time() - t_start
         print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
         wandb.log({'epoch time (s)': dt, 'epoch time (min)': dt/60})
         
-    dt = time.time() - t0
-    print ('Tempo usado para {} épocas foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))  
    
 '''
 GERADOR SEPARADO EM ENCODER / DECODER
@@ -522,21 +505,17 @@ def train_step_encdec(encoder, decoder, disc, input_image, target):
 
 # Função para o encoder/decoder
 def fit_encdec(encoder, decoder, disc, train_ds, first_epoch, epochs, test_ds):
-    
-    # Lê arquivo com as losses
-    try: 
-        loss_df = pd.read_csv(experiment_folder + "losses.csv")
-    except:
-        loss_df = pd.DataFrame(columns = ["Loss G", "Loss D"])
 
     # Listas para o cálculo da acurácia
     y_real = []
     y_pred = []
+
+    # Prepara a progression bar
+    progbar = tf.keras.utils.Progbar(int(ceil(config.TRAIN_SIZE / config.BATCH_SIZE)))
     
-    # Inicia o loop de treinamento
-    t0 = time.time()
+    ########## LOOP DE TREINAMENTO ##########
     for epoch in range(first_epoch, epochs+1):
-        t1 = time.time()
+        t_start = time.time()
         
         # Plota e salva um exemplo
         for example_input in test_ds.take(1):
@@ -566,7 +545,12 @@ def fit_encdec(encoder, decoder, disc, train_ds, first_epoch, epochs, test_ds):
         print(utils.get_time_string(), " - Epoch: ", epoch)
         
         # Train
+        i = 0 # Para o progress bar
         for n, input_image in train_ds.enumerate():
+
+            # Faz o update da Progress Bar
+            i += 1
+            progbar.update(i)
             
             # Step de treinamento
             target = input_image
@@ -575,35 +559,20 @@ def fit_encdec(encoder, decoder, disc, train_ds, first_epoch, epochs, test_ds):
             # Cálculo da acurácia
             y_real, y_pred, acc = utils.evaluate_accuracy(generator, disc, test_ds, y_real, y_pred)
 
-            # Acrescenta a loss no arquivo
-            loss_df = loss_df.append({"Loss G": gen_loss.numpy(), "Loss D" : disc_loss.numpy()}, ignore_index = True)
             # Log as métricas no wandb 
             wandb.log({ 'gen_loss': gen_loss.numpy(), 'gen_gan_loss': gen_gan_loss.numpy(), 'gen_l1_loss': gen_l1_loss.numpy(),
                         'disc_loss': disc_loss.numpy(), 'disc_real_loss': disc_real_loss.numpy(), 'disc_fake_loss': disc_fake_loss.numpy(),
                         'test_accuracy': acc})
 
-            # Printa pontinhos a cada 100. A cada 100 pontinhos, pula a linha
-            if (n+1) % 100 == 0:
-                print('.', end='')
-                if (n+1) % (100*100) == 0:
-                    print()      
-            
         # saving (checkpoint) the model every x epochs
         if (epoch) % config.CHECKPOINT_EPOCHS == 0:
             checkpoint.save(file_prefix = checkpoint_prefix)
             print("\nSalvando checkpoint...")
-            
-        # salva o arquivo de losses a cada época e plota como está ficando
-        loss_df.to_csv(experiment_folder + "losses.csv")
-        if not config.QUIET_PLOT:
-            utils.plot_losses(loss_df)
         
-        dt = time.time() - t1
+        dt = time.time() - t_start
         print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
         wandb.log({'epoch time (s)': dt, 'epoch time (min)': dt/60})
     
-    dt = time.time()-t0
-    print ('Tempo usado para {} épocas foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))  
 
 '''
 FUNÇÕES DE TREINAMENTO SEM DISCRIMINADOR (ADVERSARIAL = FALSE)
@@ -638,21 +607,17 @@ def train_step_nodisc(generator, input_image, target):
     return (gen_loss, disc_loss, gen_gan_loss, gen_l1_loss, disc_real_loss, disc_fake_loss)
 
 def fit_nodisc(generator, train_ds, first_epoch, epochs, test_ds):
-    
-    # Lê arquivo com as losses
-    try: 
-        loss_df = pd.read_csv(experiment_folder + "losses.csv")
-    except:
-        loss_df = pd.DataFrame(columns = ["Loss G", "Loss D"])
 
     # Listas para o cálculo da acurácia
     y_real = []
     y_pred = []
+
+    # Prepara a progression bar
+    progbar = tf.keras.utils.Progbar(int(ceil(config.TRAIN_SIZE / config.BATCH_SIZE)))
     
-    # Inicia o loop de treinamento
-    t0 = time.time()
+    ########## LOOP DE TREINAMENTO ##########
     for epoch in range(first_epoch, epochs+1):
-        t1 = time.time()
+        t_start = time.time()
         
         # Plota e salva um exemplo
         for example_input in test_ds.take(1):
@@ -682,41 +647,30 @@ def fit_nodisc(generator, train_ds, first_epoch, epochs, test_ds):
         print(utils.get_time_string(), " - Epoch: ", epoch)
         
         # Train
+        i = 0 # Para o progress bar
         for n, input_image in train_ds.enumerate():
+
+            # Faz o update da Progress Bar
+            i += 1
+            progbar.update(i)
             
             # Step de treinamento
             target = input_image
             gen_loss, disc_loss, gen_gan_loss, gen_l1_loss, disc_real_loss, disc_fake_loss = train_step_nodisc(generator, input_image, target)
 
-            # Acrescenta a loss no arquivo
-            loss_df = loss_df.append({"Loss G": gen_loss.numpy(), "Loss D" : disc_loss.numpy()}, ignore_index = True)
             # Log as métricas no wandb 
             wandb.log({ 'gen_loss': gen_loss.numpy(), 'gen_gan_loss': gen_gan_loss.numpy(), 'gen_l1_loss': gen_l1_loss.numpy(),
                         'disc_loss': disc_loss.numpy(), 'disc_real_loss': disc_real_loss.numpy(), 'disc_fake_loss': disc_fake_loss.numpy()})
-
-            # Printa pontinhos a cada 100. A cada 100 pontinhos, pula a linha
-            if (n+1) % 100 == 0:
-                print('.', end='')
-                if (n+1) % (100*100) == 0:
-                    print()      
             
-        # saving (checkpoint) the model every 20 epochs
+        # saving (checkpoint) the model every x epochs
         if (epoch) % config.CHECKPOINT_EPOCHS == 0:
             checkpoint.save(file_prefix = checkpoint_prefix)
             print("\nSalvando checkpoint...")
             
-        # salva o arquivo de losses a cada época e plota como está ficando
-        loss_df.to_csv(experiment_folder + "losses.csv")
-        if not config.QUIET_PLOT:
-            utils.plot_losses(loss_df)
-        
-        dt = time.time() - t1
+        dt = time.time() - t_start
         print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
         wandb.log({'epoch time (s)': dt, 'epoch time (min)': dt/60})
-        
-    dt = time.time() - t0
-    print ('Tempo usado para {} épocas foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))  
-   
+         
 
 #%% PREPARAÇÃO DOS MODELOS
 
@@ -731,19 +685,19 @@ if config.gen_model == 'unet':
 elif config.gen_model == 'resnet':
     generator = net.resnet_generator(config.IMG_SIZE)
 elif config.gen_model == 'resnet_vetor': 
-    generator = net.resnet_adapted_generator(config.IMG_SIZE)
+    generator = net.resnet_generator(config.IMG_SIZE, create_latent_vector = True)
 elif config.gen_model == 'full_resnet':
-    generator = net.VT_full_resnet_generator(config.IMG_SIZE)
-elif config.gen_model == 'simple_decoder':
-    generator = net.VT_simple_decoder(config.IMG_SIZE)
+    generator = net.full_resnet_generator(config.IMG_SIZE)
 elif config.gen_model == 'full_resnet_dis':
-    generator = net.VT_full_resnet_generator_disentangled(config.IMG_SIZE)
-elif config.gen_model == 'simple_decoder_dis':
-    generator = net.VT_simple_decoder_disentangled(config.IMG_SIZE)
+    generator = net.full_resnet_generator(config.IMG_SIZE, disentanglement = 'normal')
 elif config.gen_model == 'full_resnet_smooth':
-    generator = net.VT_full_resnet_generator_smooth_disentangle(config.IMG_SIZE)
+    generator = net.full_resnet_generator(config.IMG_SIZE, disentanglement = 'smooth')
+elif config.gen_model == 'simple_decoder':
+    generator = net.simple_decoder_generator(config.IMG_SIZE)
+elif config.gen_model == 'simple_decoder_dis':
+    generator = net.simple_decoder_generator(config.IMG_SIZE, disentanglement = 'normal')
 elif config.gen_model == 'simple_decoder_smooth':
-    generator = net.VT_simple_decoder_smooth_disentangle(config.IMG_SIZE)
+    generator = net.simple_decoder_generator(config.IMG_SIZE, disentanglement = 'smooth')
 elif config.gen_model == 'transfer':
     generator = transfer.transfer_model(config.IMG_SIZE, config.transfer_generator_path, config.transfer_generator_filename, 
     config.transfer_middle_model, config.transfer_encoder_last_layer, config.transfer_decoder_first_layer, config.transfer_trainable,
@@ -757,11 +711,11 @@ else:
 # CRIANDO O MODELO DE DISCRIMINADOR
 if config.ADVERSARIAL:
     if config.disc_model == 'patchgan':
-        disc = net.patchgan_discriminator(config.IMG_SIZE)
-    elif config.disc_model == 'stylegan_adapted': 
-        disc = net.stylegan_discriminator_patchgan(config.IMG_SIZE)
-    elif config.disc_model == 'stylegan':
-        disc = net.stylegan_discriminator(config.IMG_SIZE, constrained = constrained)
+        disc = net.patchgan_discriminator(config.IMG_SIZE, constrained = constrained)
+    elif config.disc_model == 'progan_adapted': 
+        disc = net.progan_discriminator(config.IMG_SIZE, constrained = constrained, output_type = 'patchgan')
+    elif config.disc_model == 'progan':
+        disc = net.progan_discriminator(config.IMG_SIZE, constrained = constrained, output_type = 'unit')
     else:
         raise utils.DiscriminatorError(config.disc_model)
 
@@ -874,16 +828,6 @@ if config.NUM_TEST_PRINTS > 0:
         c = c + 1
 if config.QUIET_PLOT:
     plt.close("all")
-        
-## Plota as losses
-try: 
-    loss_df = pd.read_csv(experiment_folder + "losses.csv")
-    fig = utils.plot_losses(loss_df)
-
-    if config.QUIET_PLOT:
-        plt.close(fig)
-except:
-    None
 
 ## Salva os modelos 
 if config.USE_FULL_GENERATOR: 

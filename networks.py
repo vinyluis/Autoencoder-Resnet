@@ -34,6 +34,27 @@ class ClipConstraint(Constraint):
 
 #%% BLOCOS 
 
+## Resnet e U-Net
+
+def upsample(x, filters, kernel_size = (3, 3), apply_dropout = False):
+    # Reconstrução da imagem, baseada na Pix2Pix / CycleGAN
+    x = tf.keras.layers.Conv2DTranspose(filters = filters, kernel_size = kernel_size, strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    if apply_dropout:
+        x = tf.keras.layers.Dropout(0.5)(x)
+    x = tf.keras.layers.ReLU()(x)
+    return x
+
+
+def downsample(x, filters, kernel_size = (3, 3), apply_norm = True):
+    # Reconstrução da imagem, baseada na Pix2Pix / CycleGAN    
+    x = tf.keras.layers.Conv2D(filters = filters, kernel_size = kernel_size, strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    if apply_norm:
+        x = norm_layer()(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+    return x
+
+
 def resnet_block(input_tensor, filters):
     
     ''' 
@@ -151,25 +172,7 @@ def resnet_downsample_bottleneck_block(input_tensor, filters):
     
     return x
 
-
-def upsample(x, filters, kernel_size = (3, 3), apply_dropout = False):
-    # Reconstrução da imagem, baseada na Pix2Pix / CycleGAN
-    x = tf.keras.layers.Conv2DTranspose(filters = filters, kernel_size = kernel_size, strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    if apply_dropout:
-        x = tf.keras.layers.Dropout(0.5)(x)
-    x = tf.keras.layers.ReLU()(x)
-    return x
-
-
-def downsample(x, filters, kernel_size = (3, 3), apply_norm = True):
-    # Reconstrução da imagem, baseada na Pix2Pix / CycleGAN    
-    x = tf.keras.layers.Conv2D(filters = filters, kernel_size = kernel_size, strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    if apply_norm:
-        x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    return x
-
+## Simple decoder
 
 def simple_upsample(x, scale = 2, interpolation = 'bilinear'):
     # Faz um umpsample simplificado, baseado no Progressive Growth of GANs
@@ -177,7 +180,13 @@ def simple_upsample(x, scale = 2, interpolation = 'bilinear'):
     return x
 
 
-def VT_simple_upsample_block(x, filters, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear'):
+def simple_downsample(x, scale = 2):
+    # Faz um downsample simplificado, baseado no Progressive Growth of GANs
+    x = tf.keras.layers.AveragePooling2D(pool_size = (scale, scale))(x)
+    return x
+
+
+def simple_upsample_block(x, filters, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear'):
     
     x = simple_upsample(x, scale = scale, interpolation = interpolation) 
     
@@ -190,551 +199,6 @@ def VT_simple_upsample_block(x, filters, scale = 2, kernel_size = (3, 3), interp
     x = tf.keras.layers.ReLU()(x)
     
     return x
-
-
-def simple_downsample(x, scale = 2):
-    # Faz um downsample simplificado, baseado no Progressive Growth of GANs
-    x = tf.keras.layers.AveragePooling2D(pool_size = (scale, scale))(x)
-    return x
-
-
-#%% MODELOS CUSTOMIZADOS
-
-def VT_full_resnet_generator(IMG_SIZE):
-
-    '''
-    Adaptado com base no gerador Resnet da Pix2Pix
-    Feito de forma a gerar um vetor latente entre o encoder e o decoder, mas o decoder é também um resnet
-    '''
-    
-    # Inicializa a rede
-    inputs = tf.keras.layers.Input(shape = [IMG_SIZE , IMG_SIZE , 3])
-    x = inputs
-    
-    # Primeiras camadas (pré blocos residuais)
-    x = tf.keras.layers.ZeroPadding2D([[3, 3],[3, 3]])(x)
-    x = tf.keras.layers.Conv2D(filters = 64, kernel_size = (7, 7) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    #--
-    x = tf.keras.layers.Conv2D(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-    #--
-    x = tf.keras.layers.Conv2D(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block(x, 256)
-    
-    # Criação do vetor latente 
-    vecsize = 512
-    x = tf.keras.layers.Conv2D(filters = 1, kernel_size = (3, 3) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    x = tf.keras.layers.Flatten()(x)
-    x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
-    
-    # Transforma novamente num tensor de terceira ordem
-    x = tf.expand_dims(x, axis = 1)
-    x = tf.expand_dims(x, axis = 1)
-        
-    # Upsamplings
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block_transpose(x, 256)
-    
-    # Reconstrução pós blocos residuais
-    
-    #--
-    x = tf.keras.layers.Conv2DTranspose(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    if IMG_SIZE == 256:
-        x = tf.keras.layers.Conv2DTranspose(filters = 64, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-        x = norm_layer()(x)
-        x = tf.keras.layers.ReLU()(x)
-
-    # Camadas finais
-    x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (3, 3) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.Activation('tanh')(x)
-
-    #print(x.shape)
-
-    # Cria o modelo
-    return tf.keras.Model(inputs = inputs, outputs = x)
-
-
-def VT_full_resnet_generator_disentangled(IMG_SIZE):
-
-    '''
-    Adaptado com base no gerador Resnet da Pix2Pix
-    Feito de forma a gerar um vetor latente entre o encoder e o decoder, mas o decoder é também um resnet
-    Após o vetor latente, usar 8 camadas Dense para "desembaraçar" o espaço latente, como feito na StyleGAN
-    '''
-    
-    # Inicializa a rede
-    inputs = tf.keras.layers.Input(shape = [IMG_SIZE , IMG_SIZE , 3])
-    x = inputs
-    
-    # Primeiras camadas (pré blocos residuais)
-    x = tf.keras.layers.ZeroPadding2D([[3, 3],[3, 3]])(x)
-    x = tf.keras.layers.Conv2D(filters = 64, kernel_size = (7, 7) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    #--
-    x = tf.keras.layers.Conv2D(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-    #--
-    x = tf.keras.layers.Conv2D(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block(x, 256)
-    
-    # Criação do vetor latente 
-    vecsize = 512
-    x = tf.keras.layers.Conv2D(filters = 1, kernel_size = (3, 3) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    x = tf.keras.layers.Flatten()(x)
-    x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
-    
-    # Disentanglement (de z para w, StyleGAN)
-    for i in range(8):
-        x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
-    
-    # Transforma novamente num tensor de terceira ordem
-    x = tf.expand_dims(x, axis = 1)
-    x = tf.expand_dims(x, axis = 1)
-        
-    # Upsamplings
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block_transpose(x, 256)
-    
-    # Reconstrução pós blocos residuais
-    
-    #--
-    x = tf.keras.layers.Conv2DTranspose(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    #--
-    if IMG_SIZE == 256:
-        x = tf.keras.layers.Conv2DTranspose(filters = 64, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-        x = norm_layer()(x)
-        x = tf.keras.layers.ReLU()(x)
-
-    # Camadas finais
-    # x = tf.keras.layers.ZeroPadding2D([[1, 1],[1, 1]])(x)
-    x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (3, 3) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.Activation('tanh')(x)
-
-    # print(x.shape)
-
-    # Cria o modelo
-    return tf.keras.Model(inputs = inputs, outputs = x)
-
-
-def VT_full_resnet_generator_smooth_disentangle(IMG_SIZE):
-
-    '''
-    Adaptado com base no gerador Resnet da Pix2Pix
-    Feito de forma a gerar um vetor latente entre o encoder e o decoder, mas o decoder é também um resnet
-    Após o vetor latente, usar 8 camadas Dense para "desembaraçar" o espaço latente, como feito na StyleGAN
-    '''
-    
-    # Inicializa a rede
-    inputs = tf.keras.layers.Input(shape = [IMG_SIZE , IMG_SIZE , 3])
-    x = inputs
-    
-    # Primeiras camadas (pré blocos residuais)
-    x = tf.keras.layers.ZeroPadding2D([[3, 3],[3, 3]])(x)
-    x = tf.keras.layers.Conv2D(filters = 64, kernel_size = (7, 7) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    #--
-    x = tf.keras.layers.Conv2D(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-    #--
-    x = tf.keras.layers.Conv2D(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block(x, 256)
-    
-    # Criação do vetor latente 
-    vecsize = 512
-    x = tf.keras.layers.Conv2D(filters = 1, kernel_size = (3, 3) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Flatten da convolução. 
-    # Se IMG_SIZE = 256, a saída terá 3721 elementos
-    # Se IMG_SIZE = 128, a saída terá 841 elementos
-    x = tf.keras.layers.Flatten()(x)
-
-    # Redução até vecsize
-    if IMG_SIZE == 256:
-        x = tf.keras.layers.Dense(units = 3072, kernel_initializer = initializer)(x) #2048 + 512
-        x = tf.keras.layers.Dense(units = 2048, kernel_initializer = initializer)(x)
-        x = tf.keras.layers.Dense(units = 1024, kernel_initializer = initializer)(x)
-
-    elif IMG_SIZE == 128:
-        x = tf.keras.layers.Dense(units = 768, kernel_initializer = initializer)(x) #512 + 256
-
-    x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
-    x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
-    
-    # Disentanglement (de z para w, StyleGAN)
-    for i in range(8):
-        x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
-    
-    # Transforma novamente num tensor de terceira ordem
-    x = tf.expand_dims(x, axis = 1)
-    x = tf.expand_dims(x, axis = 1)
-        
-    # Upsamplings
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block_transpose(x, 256)
-    
-    # Reconstrução pós blocos residuais
-    
-    #--
-    x = tf.keras.layers.Conv2DTranspose(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    #--
-    if IMG_SIZE == 256:
-        x = tf.keras.layers.Conv2DTranspose(filters = 64, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-        x = norm_layer()(x)
-        x = tf.keras.layers.ReLU()(x)
-
-    # Camadas finais
-    # x = tf.keras.layers.ZeroPadding2D([[1, 1],[1, 1]])(x)
-    x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (3, 3) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.Activation('tanh')(x)
-
-    # print(x.shape)
-
-    # Cria o modelo
-    return tf.keras.Model(inputs = inputs, outputs = x)
-
-
-def VT_simple_decoder(IMG_SIZE):
-
-    '''
-    Adaptado com base no gerador Resnet da Pix2Pix
-    Feito de forma a gerar um vetor latente entre o encoder e o decoder, mas o decoder é também um resnet
-    '''
-    
-    # Inicializa a rede
-    inputs = tf.keras.layers.Input(shape = [IMG_SIZE, IMG_SIZE, 3])
-    x = inputs
-    
-    # Primeiras camadas (pré blocos residuais)
-    x = tf.keras.layers.ZeroPadding2D([[3, 3],[3, 3]])(x)
-    x = tf.keras.layers.Conv2D(filters = 64, kernel_size = (7, 7) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    #--
-    x = tf.keras.layers.Conv2D(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-    #--
-    x = tf.keras.layers.Conv2D(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block(x, 256)
-    
-    # Criação do vetor latente 
-    vecsize = 512
-    x = tf.keras.layers.Conv2D(filters = 1, kernel_size = (3, 3) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    x = tf.keras.layers.Flatten()(x)
-    x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
-    
-    # Transforma novamente num tensor de terceira ordem
-    x = tf.expand_dims(x, axis = 1)
-    x = tf.expand_dims(x, axis = 1)
-        
-    # Upsamples
-    # Todos os upsamples vão ser feitos com o simple_upsample, seguidos de duas convoluções na mesma dimensão
-    if IMG_SIZE == 256:
-        x = VT_simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 2, 2, 512
-    x = VT_simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 4, 4, 512 ou 2, 2, 512
-    x = VT_simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 8, 8, 512 ou 4, 4, 512
-    x = VT_simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 16, 16, 512 ou 8, 8, 512
-    x = VT_simple_upsample_block(x, 256, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 32, 32, 256 ou 16, 16, 256
-    x = VT_simple_upsample_block(x, 128, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 64, 64, 128 ou 32, 32, 128
-    x = VT_simple_upsample_block(x, 64, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 128, 128, 64 ou 64, 64, 64
-    x = VT_simple_upsample_block(x, 32, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 256, 256, 32 ou 128, 128, 32
-
-    # Camadas finais
-    x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (3, 3) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.Activation('tanh')(x)
-
-    # print(x.shape)
-
-    # Cria o modelo
-    return tf.keras.Model(inputs = inputs, outputs = x)
-
-
-def VT_simple_decoder_disentangled(IMG_SIZE):
-
-    '''
-    Adaptado com base no gerador Resnet da Pix2Pix
-    Feito de forma a gerar um vetor latente entre o encoder e o decoder, mas o decoder é também um resnet
-    Após o vetor latente, usar 8 camadas Dense para "desembaraçar" o espaço latente, como feito na StyleGAN
-    '''
-    
-    # Inicializa a rede
-    inputs = tf.keras.layers.Input(shape = [IMG_SIZE, IMG_SIZE, 3])
-    x = inputs
-    
-    # Primeiras camadas (pré blocos residuais)
-    x = tf.keras.layers.ZeroPadding2D([[3, 3],[3, 3]])(x)
-    x = tf.keras.layers.Conv2D(filters = 64, kernel_size = (7, 7) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    #--
-    x = tf.keras.layers.Conv2D(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-    #--
-    x = tf.keras.layers.Conv2D(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block(x, 256)
-    
-    # Criação do vetor latente 
-    vecsize = 512
-    x = tf.keras.layers.Conv2D(filters = 1, kernel_size = (3, 3) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    x = tf.keras.layers.Flatten()(x)
-    x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
-    
-    # Disentanglement (de z para w, StyleGAN)
-    for i in range(8):
-        x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
-    
-    # Transforma novamente num tensor de terceira ordem
-    x = tf.expand_dims(x, axis = 1)
-    x = tf.expand_dims(x, axis = 1)
-        
-    # Upsamples
-    # Todos os upsamples vão ser feitos com o simple_upsample, seguidos de duas convoluções na mesma dimensão
-    if IMG_SIZE == 256:
-        x = VT_simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 2, 2, 512
-    x = VT_simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 4, 4, 512 ou 2, 2, 512
-    x = VT_simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 8, 8, 512 ou 4, 4, 512
-    x = VT_simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 16, 16, 512 ou 8, 8, 512
-    x = VT_simple_upsample_block(x, 256, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 32, 32, 256 ou 16, 16, 256
-    x = VT_simple_upsample_block(x, 128, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 64, 64, 128 ou 32, 32, 128
-    x = VT_simple_upsample_block(x, 64, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 128, 128, 64 ou 64, 64, 64
-    x = VT_simple_upsample_block(x, 32, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 256, 256, 32 ou 128, 128, 32
-
-    # Camadas finais
-    # x = tf.keras.layers.ZeroPadding2D([[1, 1],[1, 1]])(x)
-    x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (3, 3) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.Activation('tanh')(x)
-
-    # print(x.shape)
-
-    # Cria o modelo
-    return tf.keras.Model(inputs = inputs, outputs = x)
-
-
-def VT_simple_decoder_smooth_disentangle(IMG_SIZE):
-
-    '''
-    Adaptado com base no gerador Resnet da Pix2Pix
-    Feito de forma a gerar um vetor latente entre o encoder e o decoder, mas o decoder é também um resnet
-    Após o vetor latente, usar 8 camadas Dense para "desembaraçar" o espaço latente, como feito na StyleGAN
-    '''
-    
-    # Inicializa a rede
-    inputs = tf.keras.layers.Input(shape = [IMG_SIZE, IMG_SIZE, 3])
-    x = inputs
-    
-    # Primeiras camadas (pré blocos residuais)
-    x = tf.keras.layers.ZeroPadding2D([[3, 3],[3, 3]])(x)
-    x = tf.keras.layers.Conv2D(filters = 64, kernel_size = (7, 7) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    #--
-    x = tf.keras.layers.Conv2D(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-    #--
-    x = tf.keras.layers.Conv2D(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block(x, 256)
-    
-    # Criação do vetor latente 
-    vecsize = 512
-    x = tf.keras.layers.Conv2D(filters = 1, kernel_size = (3, 3) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Flatten da convolução. 
-    # Se IMG_SIZE = 256, a saída terá 3721 elementos
-    # Se IMG_SIZE = 128, a saída terá 841 elementos
-    x = tf.keras.layers.Flatten()(x)
-
-    # Redução até vecsize
-    if IMG_SIZE == 256:
-        x = tf.keras.layers.Dense(units = 3072, kernel_initializer = initializer)(x) #2048 + 512
-        x = tf.keras.layers.Dense(units = 2048, kernel_initializer = initializer)(x)
-        x = tf.keras.layers.Dense(units = 1024, kernel_initializer = initializer)(x)
-
-    elif IMG_SIZE == 128:
-        x = tf.keras.layers.Dense(units = 768, kernel_initializer = initializer)(x) #512 + 256
-
-    x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
-    x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
-    
-    # Disentanglement (de z para w, StyleGAN)
-    for i in range(8):
-        x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
-    
-    # Transforma novamente num tensor de terceira ordem
-    x = tf.expand_dims(x, axis = 1)
-    x = tf.expand_dims(x, axis = 1)
-        
-    # Upsamples
-    # Todos os upsamples vão ser feitos com o simple_upsample, seguidos de duas convoluções na mesma dimensão
-    if IMG_SIZE == 256:
-        x = VT_simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 2, 2, 512
-    x = VT_simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 4, 4, 512 ou 2, 2, 512
-    x = VT_simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 8, 8, 512 ou 4, 4, 512
-    x = VT_simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 16, 16, 512 ou 8, 8, 512
-    x = VT_simple_upsample_block(x, 256, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 32, 32, 256 ou 16, 16, 256
-    x = VT_simple_upsample_block(x, 128, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 64, 64, 128 ou 32, 32, 128
-    x = VT_simple_upsample_block(x, 64, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 128, 128, 64 ou 64, 64, 64
-    x = VT_simple_upsample_block(x, 32, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 256, 256, 32 ou 128, 128, 32
-
-    # Camadas finais
-    # x = tf.keras.layers.ZeroPadding2D([[1, 1],[1, 1]])(x)
-    x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (3, 3) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.Activation('tanh')(x)
-
-    # print(x.shape)
-
-    # Cria o modelo
-    return tf.keras.Model(inputs = inputs, outputs = x)
 
 
 #%% GERADORES
@@ -852,59 +316,7 @@ def resnet_decoder(IMG_SIZE):
     return tf.keras.Model(inputs = inputs, outputs = x)    
 
 
-def resnet_generator(IMG_SIZE):
-    
-    '''
-    Versão original do gerador ResNet utilizado nos papers Pix2Pix e CycleGAN
-    '''
-    
-    # Inicializa a rede
-    inputs = tf.keras.layers.Input(shape = [IMG_SIZE, IMG_SIZE, 3])
-    x = inputs
-    
-    # Primeiras camadas (pré blocos residuais)
-    x = tf.keras.layers.ZeroPadding2D([[3, 3],[3, 3]])(x)
-    x = tf.keras.layers.Conv2D(filters = 64, kernel_size = (7, 7) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    #--
-    x = tf.keras.layers.Conv2D(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-    #--
-    x = tf.keras.layers.Conv2D(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block(x, 256)
-        
-    # print(x.shape)
-        
-    # Reconstrução da imagem
-    x = tf.keras.layers.Conv2DTranspose(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = 64, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-
-    # Camadas finais
-    x = tf.keras.layers.ZeroPadding2D([[2, 2],[2, 2]])(x)
-    x = tf.keras.layers.Conv2D(filters = 3, kernel_size = (7, 7) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = tf.keras.layers.Activation('tanh')(x)
-    
-    # print(x.shape)
-
-    # Cria o modelo
-    return tf.keras.Model(inputs = inputs, outputs = x)
-
-
-def resnet_adapted_generator(IMG_SIZE):
+def resnet_generator(IMG_SIZE, create_latent_vector = False):
     
     '''
     Adaptado do gerador utilizado nos papers Pix2Pix e CycleGAN
@@ -934,52 +346,292 @@ def resnet_adapted_generator(IMG_SIZE):
     # Blocos Resnet
     for i in range(9):
         x = resnet_block(x, 256)
-        
-    # Criação do vetor latente
-    #x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    #x = tf.keras.layers.Dense(units = 512, kernel_initializer=initializer)(x)
     
-    # Criação do vetor latente (alternativa)
+    # Criação do vetor latente
+    if create_latent_vector:
+        
+        # Criação do vetor latente (alternativa)
+        vecsize = 512
+        x = tf.keras.layers.Conv2D(filters = 1, kernel_size = (3, 3) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
+        x = norm_layer()(x)
+        x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+        
+        x = tf.keras.layers.Flatten()(x)
+        x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
+        
+        # Transforma novamente num tensor de terceira ordem
+        x = tf.expand_dims(x, axis = 1)
+        x = tf.expand_dims(x, axis = 1)
+        
+        # Reconstrução da imagem
+        if IMG_SIZE == 256:
+            upsamples = 5
+        elif IMG_SIZE == 128:
+            upsamples = 4
+
+        for i in range(upsamples):
+            x = tf.keras.layers.Conv2DTranspose(filters = vecsize, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
+            x = norm_layer()(x)
+            x = tf.keras.layers.ReLU()(x)
+            
+        x = tf.keras.layers.Conv2DTranspose(filters = vecsize/2, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
+        x = norm_layer()(x)
+        x = tf.keras.layers.ReLU()(x)
+        
+        x = tf.keras.layers.Conv2DTranspose(filters = vecsize/4, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
+        x = norm_layer()(x)
+        x = tf.keras.layers.ReLU()(x)
+        
+        x = tf.keras.layers.Conv2DTranspose(filters = vecsize/8, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
+        x = norm_layer()(x)
+        x = tf.keras.layers.ReLU()(x)
+
+        # Camadas finais
+        x = tf.keras.layers.Conv2D(filters = 3, kernel_size = (7, 7) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+        x = tf.keras.layers.Activation('tanh')(x)
+    
+    else:
+        # Reconstrução da imagem
+        x = tf.keras.layers.Conv2DTranspose(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
+        x = norm_layer()(x)
+        x = tf.keras.layers.ReLU()(x)
+        
+        x = tf.keras.layers.Conv2DTranspose(filters = 64, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
+        x = norm_layer()(x)
+        x = tf.keras.layers.ReLU()(x)
+
+        # Camadas finais
+        x = tf.keras.layers.ZeroPadding2D([[2, 2],[2, 2]])(x)
+        x = tf.keras.layers.Conv2D(filters = 3, kernel_size = (7, 7) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+        x = tf.keras.layers.Activation('tanh')(x)
+
+    # Cria o modelo
+    return tf.keras.Model(inputs = inputs, outputs = x)
+
+# Modelos customizados
+
+def full_resnet_generator(IMG_SIZE, disentanglement = 'none'):
+
+    '''
+    Adaptado com base no gerador Resnet da Pix2Pix
+    Feito de forma a gerar um vetor latente entre o encoder e o decoder, mas o decoder é também um resnet
+    Após o vetor latente, usar 8 camadas Dense para "desembaraçar" o espaço latente, como feito na StyleGAN
+    '''
+    
+    # Inicializa a rede
+    inputs = tf.keras.layers.Input(shape = [IMG_SIZE , IMG_SIZE , 3])
+    x = inputs
+    
+    # Primeiras camadas (pré blocos residuais)
+    x = tf.keras.layers.ZeroPadding2D([[3, 3],[3, 3]])(x)
+    x = tf.keras.layers.Conv2D(filters = 64, kernel_size = (7, 7) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+    
+    #--
+    x = tf.keras.layers.Conv2D(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+
+    #--
+    x = tf.keras.layers.Conv2D(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+    
+    # Blocos Resnet
+    for i in range(9):
+        x = resnet_block(x, 256)
+    
+    # Criação do vetor latente 
     vecsize = 512
     x = tf.keras.layers.Conv2D(filters = 1, kernel_size = (3, 3) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
     x = norm_layer()(x)
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
     
+    # Flatten da convolução
+    # Se IMG_SIZE = 256, a saída terá 3721 elementos
+    # Se IMG_SIZE = 128, a saída terá 841 elementos
     x = tf.keras.layers.Flatten()(x)
-    x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
+
+    if disentanglement == 'smooth':
+        # Redução até vecsize (parte do smooth disentanglement)
+        if IMG_SIZE == 256:
+            x = tf.keras.layers.Dense(units = 3072, kernel_initializer = initializer)(x) #2048 + 512
+            x = tf.keras.layers.Dense(units = 2048, kernel_initializer = initializer)(x)
+            x = tf.keras.layers.Dense(units = 1024, kernel_initializer = initializer)(x)
+
+        elif IMG_SIZE == 128:
+            x = tf.keras.layers.Dense(units = 768, kernel_initializer = initializer)(x) #512 + 256
+
+        # Disentanglement (de z para w, baseado na StyleGAN)
+        disentanglement_steps = 5 if IMG_SIZE == 256 else 7
+        for i in range(disentanglement_steps):
+            x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
+
+    elif disentanglement == 'normal':
+
+        # Disentanglement (de z para w, baseado na StyleGAN)
+        for i in range(8):
+            x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
+
+    elif disentanglement == None or disentanglement == 'none':
+
+        x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
+
+    else:
+        raise BaseException("Selecione um tipo válido de desemaranhamento")
+
     
     # Transforma novamente num tensor de terceira ordem
     x = tf.expand_dims(x, axis = 1)
     x = tf.expand_dims(x, axis = 1)
         
-    # Reconstrução da imagem
+    # Upsamplings
+    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    x = tf.keras.layers.ReLU()(x)
+    
+    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    x = tf.keras.layers.ReLU()(x)
+    
+    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    x = tf.keras.layers.ReLU()(x)
+    
+    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    x = tf.keras.layers.ReLU()(x)
+    
+    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    x = tf.keras.layers.ReLU()(x)
+    
+    x = tf.keras.layers.Conv2DTranspose(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    x = tf.keras.layers.ReLU()(x)
+    
+    # Blocos Resnet
+    for i in range(9):
+        x = resnet_block_transpose(x, 256)
+    
+    # Reconstrução pós blocos residuais
+    
+    #--
+    x = tf.keras.layers.Conv2DTranspose(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    x = tf.keras.layers.ReLU()(x)
+    
+    #--
     if IMG_SIZE == 256:
-        upsamples = 5
-    elif IMG_SIZE == 128:
-        upsamples = 4
-
-    for i in range(upsamples):
-        x = tf.keras.layers.Conv2DTranspose(filters = vecsize, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
+        x = tf.keras.layers.Conv2DTranspose(filters = 64, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
         x = norm_layer()(x)
         x = tf.keras.layers.ReLU()(x)
-        
-    x = tf.keras.layers.Conv2DTranspose(filters = vecsize/2, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = vecsize/4, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
-    
-    x = tf.keras.layers.Conv2DTranspose(filters = vecsize/8, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)    
-    x = norm_layer()(x)
-    x = tf.keras.layers.ReLU()(x)
 
     # Camadas finais
-    # x = tf.keras.layers.ZeroPadding2D([[2, 2],[2, 2]])(x)
-    x = tf.keras.layers.Conv2D(filters = 3, kernel_size = (7, 7) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    # x = tf.keras.layers.ZeroPadding2D([[1, 1],[1, 1]])(x)
+    x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (3, 3) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
     x = tf.keras.layers.Activation('tanh')(x)
+
+    # print(x.shape)
+
+    # Cria o modelo
+    return tf.keras.Model(inputs = inputs, outputs = x)
+
+
+def simple_decoder_generator(IMG_SIZE, disentanglement = 'none'):
+
+    '''
+    Adaptado com base no gerador Resnet da Pix2Pix
+    Feito de forma a gerar um vetor latente entre o encoder e o decoder, mas o decoder é também um resnet
+    Após o vetor latente, usar 8 camadas Dense para "desembaraçar" o espaço latente, como feito na StyleGAN
+    '''
     
+    # Inicializa a rede
+    inputs = tf.keras.layers.Input(shape = [IMG_SIZE, IMG_SIZE, 3])
+    x = inputs
+    
+    # Primeiras camadas (pré blocos residuais)
+    x = tf.keras.layers.ZeroPadding2D([[3, 3],[3, 3]])(x)
+    x = tf.keras.layers.Conv2D(filters = 64, kernel_size = (7, 7) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+    
+    #--
+    x = tf.keras.layers.Conv2D(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+
+    #--
+    x = tf.keras.layers.Conv2D(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+    
+    # Blocos Resnet
+    for i in range(9):
+        x = resnet_block(x, 256)
+    
+    # Criação do vetor latente 
+    vecsize = 512
+    x = tf.keras.layers.Conv2D(filters = 1, kernel_size = (3, 3) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
+    x = norm_layer()(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+    
+    # Flatten da convolução. 
+    # Se IMG_SIZE = 256, a saída terá 3721 elementos
+    # Se IMG_SIZE = 128, a saída terá 841 elementos
+    x = tf.keras.layers.Flatten()(x)
+
+    if disentanglement == 'smooth':
+
+        # Redução até vecsize
+        if IMG_SIZE == 256:
+            x = tf.keras.layers.Dense(units = 3072, kernel_initializer = initializer)(x) #2048 + 512
+            x = tf.keras.layers.Dense(units = 2048, kernel_initializer = initializer)(x)
+            x = tf.keras.layers.Dense(units = 1024, kernel_initializer = initializer)(x)
+
+        elif IMG_SIZE == 128:
+            x = tf.keras.layers.Dense(units = 768, kernel_initializer = initializer)(x) #512 + 256
+        
+        # Disentanglement (de z para w, StyleGAN)
+        disentanglement_steps = 5 if IMG_SIZE == 256 else 7
+        for i in range(disentanglement_steps):
+            x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
+
+    elif disentanglement == 'normal':
+
+        # Disentanglement (de z para w, baseado na StyleGAN)
+        for i in range(8):
+            x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
+
+    elif disentanglement == None or disentanglement == 'none':
+
+        x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
+
+    else:
+        raise BaseException("Selecione um tipo válido de desemaranhamento")
+    
+    # Transforma novamente num tensor de terceira ordem
+    x = tf.expand_dims(x, axis = 1)
+    x = tf.expand_dims(x, axis = 1)
+        
+    # Upsamples
+    # Todos os upsamples vão ser feitos com o simple_upsample, seguidos de duas convoluções na mesma dimensão
+    if IMG_SIZE == 256:
+        x = simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 2, 2, 512
+    x = simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 4, 4, 512 ou 2, 2, 512
+    x = simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 8, 8, 512 ou 4, 4, 512
+    x = simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 16, 16, 512 ou 8, 8, 512
+    x = simple_upsample_block(x, 256, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 32, 32, 256 ou 16, 16, 256
+    x = simple_upsample_block(x, 128, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 64, 64, 128 ou 32, 32, 128
+    x = simple_upsample_block(x, 64, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 128, 128, 64 ou 64, 64, 64
+    x = simple_upsample_block(x, 32, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 256, 256, 32 ou 128, 128, 32
+
+    # Camadas finais
+    # x = tf.keras.layers.ZeroPadding2D([[1, 1],[1, 1]])(x)
+    x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (3, 3) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    x = tf.keras.layers.Activation('tanh')(x)
+
     # print(x.shape)
 
     # Cria o modelo
@@ -988,11 +640,16 @@ def resnet_adapted_generator(IMG_SIZE):
 
 #%% DISCRIMINADORES
 
-def patchgan_discriminator(IMG_SIZE):
+def patchgan_discriminator(IMG_SIZE, constrained = False):
     
     '''
     Versão original do discriminador utilizado nos papers Pix2Pix e CycleGAN
     '''
+
+    ## Restrições para o discriminador (usado na WGAN original)
+    constraint = ClipConstraint(0.01)
+    if constrained == False:
+        constraint = None
     
     # Inicializa a rede e os inputs
     inp = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, 3], name='input_image')
@@ -1001,107 +658,30 @@ def patchgan_discriminator(IMG_SIZE):
     x = tf.keras.layers.concatenate([inp, tar]) 
     
     # Convoluções
-    x = tf.keras.layers.Conv2D(64, 4, strides=2, kernel_initializer=initializer, padding = 'same')(x)
+    x = tf.keras.layers.Conv2D(64, 4, strides=2, kernel_initializer=initializer, padding = 'same', kernel_constraint = constraint)(x)
     x = tf.keras.layers.LeakyReLU()(x)
     
     if IMG_SIZE == 256:
-        x = tf.keras.layers.Conv2D(128, 4, strides=2, kernel_initializer=initializer, padding = 'valid')(x)
+        x = tf.keras.layers.Conv2D(128, 4, strides=2, kernel_initializer=initializer, padding = 'valid', kernel_constraint = constraint)(x)
         x = tf.keras.layers.LeakyReLU()(x)
     elif IMG_SIZE == 128:
-        x = tf.keras.layers.Conv2D(128, 2, strides=1, kernel_initializer=initializer, padding = 'valid')(x)
+        x = tf.keras.layers.Conv2D(128, 2, strides=1, kernel_initializer=initializer, padding = 'valid', kernel_constraint = constraint)(x)
         x = tf.keras.layers.LeakyReLU()(x)
     
-    x = tf.keras.layers.Conv2D(256, 4, strides=2, kernel_initializer=initializer, padding = 'valid')(x)
+    x = tf.keras.layers.Conv2D(256, 4, strides=2, kernel_initializer=initializer, padding = 'valid', kernel_constraint = constraint)(x)
     x = tf.keras.layers.LeakyReLU()(x)
     
-    x = tf.keras.layers.Conv2D(512, 4, strides=1, kernel_initializer=initializer, padding = 'same')(x)
+    x = tf.keras.layers.Conv2D(512, 4, strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint = constraint)(x)
     x = tf.keras.layers.LeakyReLU()(x)
     
     # Camada final (30 x 30 x 1) - Para usar o L1 loss
-    x = tf.keras.layers.Conv2D(1, 4, strides=1, kernel_initializer=initializer, padding = 'same')(x)
+    x = tf.keras.layers.Conv2D(1, 4, strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint = constraint)(x)
     # print(x.shape)
 
     return tf.keras.Model(inputs=[inp, tar], outputs=x)
 
 
-def stylegan_discriminator_patchgan(IMG_SIZE):
-
-    '''
-    Adaptado do discriminador utilizado nos papers ProgGAN e styleGAN
-    1ª adaptação é para poder usar a mesma loss e estrutura da PatchGAN, para aprendizado supervisionado
-    2ª adaptação é para usar imagens 256x256 (ou IMG_SIZE x IMG_SIZE):
-        As primeiras 3 convoluições são mantidas (filters = 16, 16, 32) com as dimensões 256 x 256
-        Então "pula" para a sexta convolução, que já é originalmente de tamanho 256 x 256 e continua daí para a frente
-    3ª adaptação é para terminar com imagens 30x30, para poder usar a mesma loss da PatchGAN
-    '''
-    
-    # Inicializa a rede e os inputs
-    inp = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, 3], name='input_image')
-    tar = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, 3], name='target_image')
-    x = tf.keras.layers.concatenate([inp, tar])    
-
-    # Primeiras três convoluções adaptadas para IMG_SIZE x IMG_SIZE
-    x = tf.keras.layers.Conv2D(16, (1 , 1), strides=1, kernel_initializer=initializer, padding = 'same')(x) # (bs, 16, IMG_SIZE, IMG_SIZE)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.Conv2D(16, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same')(x) # (bs, 16, IMG_SIZE, IMG_SIZE)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.Conv2D(32, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same')(x) # (bs, 32, IMG_SIZE, IMG_SIZE)
-    x = tf.keras.layers.LeakyReLU()(x)
-
-    # print("Etapa 256: ")
-    # print(x.shape)
-    
-    if IMG_SIZE == 256:
-        # Etapa 256 (convoluções 6 e 7)
-        x = tf.keras.layers.Conv2D(64, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same')(x) # (bs, 64, 256, 256)
-        x = tf.keras.layers.LeakyReLU()(x)
-        x = tf.keras.layers.Conv2D(128, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same')(x) # (bs, 128, 256, 256)
-        x = tf.keras.layers.LeakyReLU()(x)
-        x = simple_downsample(x, scale = 2) # (bs, 128, 128, 128)
-    
-    # print("\nEtapa 128: ")
-    # print(x.shape)
-
-    # Etapa 128
-    x = tf.keras.layers.Conv2D(128, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same')(x) # (bs, 128, 128, 128)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.Conv2D(256, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same')(x) # (bs, 256, 128, 128)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = simple_downsample(x, scale = 2) # (bs, 256, 64, 64)
-    
-    # print("\nEtapa 64: ")
-    # print(x.shape)
-
-    # Etapa 64
-    x = tf.keras.layers.Conv2D(256, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same')(x) # (bs, 256, 64, 64)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same')(x) # (bs, 512, 64, 64)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = simple_downsample(x, scale = 2) # (bs, 512, 32, 32)
-    
-    # print("\nEtapa 32: ")
-    # print(x.shape)
-
-    # Etapa 32 
-    x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same')(x) # (bs, 512, 32, 32)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same')(x) # (bs, 512, 32, 32)
-    x = tf.keras.layers.LeakyReLU()(x)
-    
-    # print(x.shape)
-
-    # Adaptação para finalizar com 30x30    
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.Conv2D(1, 3, strides=1, kernel_initializer=initializer)(x) # (bs, 30, 30, 1)
-
-    # print("\nFinal:")
-    # print(x.shape)
-    
-    return tf.keras.Model(inputs=[inp, tar], outputs=x)
-
-
-def stylegan_discriminator(IMG_SIZE, constrained = False):
+def progan_discriminator(IMG_SIZE, constrained = False, output_type = 'unit'):
 
     '''
     Adaptado do discriminador utilizado nos papers ProgGAN e styleGAN
@@ -1111,12 +691,10 @@ def stylegan_discriminator(IMG_SIZE, constrained = False):
         Então "pula" para a sexta convolução, que já é originalmente de tamanho 256 x 256 e continua daí para a frente
     '''
     ## Restrições para o discriminador (usado na WGAN original)
-    # constraint = tf.keras.constraints.MinMaxNorm(min_value = -0.01, max_value = 0.01)
     constraint = ClipConstraint(0.01)
     if constrained == False:
         constraint = None
 
-    
     # Inicializa a rede e os inputs
     inp = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, 3], name='input_image')
     tar = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, 3], name='target_image')
@@ -1151,44 +729,56 @@ def stylegan_discriminator(IMG_SIZE, constrained = False):
     x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 64, 64)
     x = tf.keras.layers.LeakyReLU()(x)
     x = simple_downsample(x, scale = 2) # (bs, 512, 32, 32)
-    
-    # Etapa 32 
-    x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 32, 32)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 32, 32)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = simple_downsample(x, scale = 2) # (bs, 512, 16, 16)
-    
-    # Etapa 16
-    x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 16, 16)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 16, 16)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = simple_downsample(x, scale = 2) # (bs, 512, 8, 8)
-    
-    # Etapa 8
-    x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 8, 8)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 8, 8)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = simple_downsample(x, scale = 2) # (bs, 512, 4, 4)
-    
-    # print(x.shape)
 
-    # Final - 4 para 1
-    # Nesse ponto ele faz uma minibatch stddev. Avaliar depois fazer BatchNorm
-    x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 4, 4)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.Conv2D(512, (4 , 4), strides=1, kernel_initializer=initializer, kernel_constraint=constraint)(x) # (bs, 512, 1, 1)
-    x = tf.keras.layers.LeakyReLU()(x)
-    
-    # print(x.shape)
+    if output_type == 'patchgan':
+        # Etapa 32 
+        x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 32, 32)
+        x = tf.keras.layers.LeakyReLU()(x)
+        x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 32, 32)
+        x = tf.keras.layers.LeakyReLU()(x)
 
-    # Finaliza com uma Fully Connected 
-    x = tf.keras.layers.Flatten()(x)
-    # x = tf.keras.layers.Dense(1, activation = 'linear', kernel_constraint=constraint)(x)
-    x = tf.keras.layers.Dense(1, kernel_constraint=constraint)(x)
-    
+        # Adaptação para finalizar com 30x30    
+        x = norm_layer()(x)
+        x = tf.keras.layers.LeakyReLU()(x)
+        x = tf.keras.layers.Conv2D(1, 3, strides=1, kernel_initializer=initializer)(x) # (bs, 30, 30, 1)
+
+    elif output_type == 'unit':
+        # Etapa 32 
+        x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 32, 32)
+        x = tf.keras.layers.LeakyReLU()(x)
+        x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 32, 32)
+        x = tf.keras.layers.LeakyReLU()(x)
+        x = simple_downsample(x, scale = 2) # (bs, 512, 16, 16)
+
+        # Etapa 16
+        x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 16, 16)
+        x = tf.keras.layers.LeakyReLU()(x)
+        x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 16, 16)
+        x = tf.keras.layers.LeakyReLU()(x)
+        x = simple_downsample(x, scale = 2) # (bs, 512, 8, 8)
+        
+        # Etapa 8
+        x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 8, 8)
+        x = tf.keras.layers.LeakyReLU()(x)
+        x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 8, 8)
+        x = tf.keras.layers.LeakyReLU()(x)
+        x = simple_downsample(x, scale = 2) # (bs, 512, 4, 4)
+
+        # Final - 4 para 1
+        # Nesse ponto ele faz uma minibatch stddev. Avaliar depois fazer BatchNorm
+        x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 4, 4)
+        x = tf.keras.layers.LeakyReLU()(x)
+        x = tf.keras.layers.Conv2D(512, (4 , 4), strides=1, kernel_initializer=initializer, kernel_constraint=constraint)(x) # (bs, 512, 1, 1)
+        x = tf.keras.layers.LeakyReLU()(x)
+
+        # Finaliza com uma Fully Connected 
+        x = tf.keras.layers.Flatten()(x)
+        # x = tf.keras.layers.Dense(1, activation = 'linear', kernel_constraint=constraint)(x)
+        x = tf.keras.layers.Dense(1, kernel_constraint=constraint)(x)
+        
+    else:
+        raise BaseException("Escolha um tipo de saída válida")
+
     return tf.keras.Model(inputs=[inp, tar], outputs=x)
 
 
@@ -1202,18 +792,23 @@ if __name__ == "__main__":
         print(f"\n---- IMG_SIZE = {IMG_SIZE}")
         print("Geradores:")
         print("U-Net                                ", unet_generator(IMG_SIZE).output.shape)
-        print("ResNet                               ", resnet_generator(IMG_SIZE).output.shape)
-        print("ResNet adaptado                      ", resnet_adapted_generator(IMG_SIZE).output.shape)
+        print("ResNet                               ", resnet_generator(IMG_SIZE, create_latent_vector = False).output.shape)
+        print("ResNet adaptado                      ", resnet_generator(IMG_SIZE, create_latent_vector = True).output.shape)
         print("ResNet encoder                       ", resnet_encoder(IMG_SIZE).output.shape)
         print("ResNet decoder                       ", resnet_decoder(IMG_SIZE).output.shape)
-        print("Full ResNet                          ", VT_full_resnet_generator(IMG_SIZE).output.shape)
-        print("Full ResNet Disentangled             ", VT_full_resnet_generator_disentangled(IMG_SIZE).output.shape)
-        print("Full ResNet Smooth Disentangle       ", VT_full_resnet_generator_smooth_disentangle(IMG_SIZE).output.shape)
-        print("Simple Decoder                       ", VT_simple_decoder(IMG_SIZE).output.shape)
-        print("Simple Decoder Disentangled          ", VT_simple_decoder_disentangled(IMG_SIZE).output.shape)
-        print("Simple Decoder Smooth Disentangle    ", VT_simple_decoder_smooth_disentangle(IMG_SIZE).output.shape)
+        print("Full ResNet                          ", full_resnet_generator(IMG_SIZE).output.shape)
+        print("Full ResNet Disentangled             ", full_resnet_generator(IMG_SIZE, disentanglement = 'normal').output.shape)
+        print("Full ResNet Smooth Disentangle       ", full_resnet_generator(IMG_SIZE, disentanglement = 'smooth').output.shape)
+        print("Simple Decoder                       ", simple_decoder_generator(IMG_SIZE).output.shape)
+        print("Simple Decoder Disentangled          ", simple_decoder_generator(IMG_SIZE, disentanglement = 'normal').output.shape)
+        print("Simple Decoder Smooth Disentangle    ", simple_decoder_generator(IMG_SIZE, disentanglement = 'smooth').output.shape)
         print("Discriminadores:")
         print("PatchGAN                             ", patchgan_discriminator(IMG_SIZE).output.shape)
-        print("ProGAN adapted                       ", stylegan_discriminator_patchgan(IMG_SIZE).output.shape)
-        print("ProGAN                               ", stylegan_discriminator(IMG_SIZE).output.shape)
+        print("ProGAN (output_type = unit)          ", progan_discriminator(IMG_SIZE, output_type='unit').output.shape)
+        print("ProGAN (output_type = patchgan)      ", progan_discriminator(IMG_SIZE, output_type='patchgan').output.shape)
 
+# gen_normal = resnet_adapted_generator(128, create_latent_vector = False)
+# gen_normal.save("gen_normal_new.h5")
+
+# gen_adapted = resnet_adapted_generator(128, create_latent_vector = True)
+# gen_adapted.save("gen_adapted_new.h5")
