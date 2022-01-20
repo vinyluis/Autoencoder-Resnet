@@ -1,16 +1,22 @@
 # FUNÇÕES DE APOIO PARA O AUTOENCODER
+
+import os
 import matplotlib.pyplot as plt
-import pandas as pd
 import seaborn as sns
 import numpy as np
 from datetime import datetime
 from datetime import timedelta
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
+import tensorflow as tf
+
 from sklearn.metrics import accuracy_score as accuracy
 
-# Prepara a string de data e hora conforme necessário
+#%% FUNÇÕES DE APOIO
+
 def get_time_string(mode = "complete", days_offset = 0):
-    
+    # Prepara a string de data e hora conforme necessário
+
     #horário atual
     now = datetime.now()
     now = now + timedelta(days = days_offset) # adiciona um offset de x dias
@@ -46,61 +52,8 @@ def get_time_string(mode = "complete", days_offset = 0):
     if(mode == "file"):
         st = yr+mt+dy
         return st
-
-def generate_images(encoder, decoder, img_input):
-    latent = encoder(img_input, training=True)
-    img_predict = decoder(latent, training=True)
-    plt.figure(figsize=(15,15))
     
-    display_list = [img_input[0], img_predict[0]]
-    title = ['Input Image', 'Predicted Image']
-    
-    for i in range(2):
-        plt.subplot(1, 2, i+1)
-        plt.title(title[i])
-        # getting the pixel values between [0, 1] to plot it.
-        plt.imshow(display_list[i] * 0.5 + 0.5)
-        plt.axis('off')
-    plt.show()  
-
-def generate_images_gen(generator, img_input):
-    img_predict = generator(img_input, training=True)
-    f = plt.figure(figsize=(15,15))
-    
-    display_list = [img_input[0], img_predict[0]]
-    title = ['Input Image', 'Predicted Image']
-    
-    for i in range(2):
-        plt.subplot(1, 2, i+1)
-        plt.title(title[i])
-        # getting the pixel values between [0, 1] to plot it.
-        plt.imshow(display_list[i] * 0.5 + 0.5)
-        plt.axis('off')
-
-    f.show()
-    
-def generate_save_images(encoder, decoder, img_input, save_destination, filename):
-    latent = encoder(img_input, training=True)
-    img_predict = decoder(latent, training=True)
-    f = plt.figure(figsize=(15,15))
-    
-    print("Latent Vector:")
-    print(latent)
-    
-    display_list = [img_input[0], img_predict[0]]
-    title = ['Input Image', 'Predicted Image']
-    
-    for i in range(2):
-        plt.subplot(1, 2, i+1)
-        plt.title(title[i])
-        # getting the pixel values between [0, 1] to plot it.
-        plt.imshow(display_list[i] * 0.5 + 0.5)
-        plt.axis('off')
-    f.show()
-    
-    f.savefig(save_destination + filename)
-    
-def generate_save_images_gen(generator, img_input, save_destination, filename):
+def generate_images(generator, img_input, save_destination = None, filename = None):
     img_predict = generator(img_input, training=True)
     f = plt.figure(figsize=(15,15))
     
@@ -115,7 +68,8 @@ def generate_save_images_gen(generator, img_input, save_destination, filename):
         plt.axis('off')
     f.show()
     
-    f.savefig(save_destination + filename)
+    if save_destination != None and filename != None:
+        f.savefig(save_destination + filename)
 
     return f
 
@@ -177,6 +131,52 @@ def evaluate_accuracy(generator, discriminator, test_ds, y_real, y_pred, window 
             acc = accuracy(y_real, y_pred)
 
         return y_real, y_pred, acc
+
+#%% FUNÇÕES DO DATASET
+
+def load(image_file):
+    image = tf.io.read_file(image_file)
+    image = tf.image.decode_jpeg(image)
+    image = tf.cast(image, tf.float32)
+    return image
+
+def normalize(input_image):
+    # normalizing the images to [-1, 1]
+    input_image = (input_image / 127.5) - 1
+    return input_image
+
+def resize(input_image, height, width):
+    input_image = tf.image.resize(input_image, [height, width], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+    return input_image
+
+def random_crop(input_image, img_size, num_channels):
+    cropped_image = tf.image.random_crop(value = input_image, size = [img_size, img_size, num_channels])
+    return cropped_image
+
+def random_jitter(input_image, img_size, num_channels):
+    # resizing to 286 x 286 x 3
+    new_size = int(img_size * 1.117)
+    input_image = resize(input_image, new_size, new_size)
+    # randomly cropping to IMGSIZE x IMGSIZE x 3
+    input_image = random_crop(input_image, img_size, num_channels)
+    
+    if tf.random.uniform(()) > 0.5:
+        # random mirroring
+        input_image = tf.image.flip_left_right(input_image)
+    
+    return input_image
+
+def load_image_train(image_file, img_size, num_channels):
+    input_image = load(image_file)    
+    input_image = random_jitter(input_image, img_size, num_channels)
+    input_image = normalize(input_image)
+    return input_image
+
+def load_image_test(image_file, img_size):
+    input_image = load(image_file)    
+    input_image = resize(input_image, img_size, img_size)
+    input_image = normalize(input_image)
+    return input_image
 
 #%% TRATAMENTO DE EXCEÇÕES
     

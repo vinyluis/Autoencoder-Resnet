@@ -6,7 +6,6 @@
 import os
 import time
 from matplotlib import pyplot as plt
-import pandas as pd
 from math import ceil
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
@@ -64,7 +63,7 @@ config.KEEP_CHECKPOINTS = 2
 # Código do experimento (se não houver, deixar "")
 config.exp = ""
 
-# Modelo do gerador. Possíveis = 'unet', 'resnet', 'resnet_vetor', 'encoder_decoder', 'full_resnet', 'simple_decoder', 
+# Modelo do gerador. Possíveis = 'unet', 'resnet', 'resnet_vetor', 'full_resnet', 'simple_decoder', 
 # 'full_resnet_dis', 'simple_decoder_dis', 'full_resnet_smooth', 'simple_decoder_smooth', 'transfer',
 config.gen_model = 'unet'
 
@@ -84,12 +83,6 @@ if config.gen_model == 'transfer':
     config.transfer_decoder_first_layer = 'conv2d_transpose'
     config.transfer_disentangle = True
     config.transfer_smooth_vector = True
-
-# Acerta o flag USE_FULL_GENERATOR que indica se o gerador é único (full) ou partido (encoder + decoder)
-if config.gen_model == 'encoder_decoder':
-    config.USE_FULL_GENERATOR = False
-else:
-    config.USE_FULL_GENERATOR = True
 
 # Acerta o flag ADVERSARIAL que indica se o treinamento é adversário (GAN) ou não
 if config.loss_type == 'l1' or config.loss_type == 'l2':
@@ -125,10 +118,10 @@ experiment_folder += config.disc_model
 experiment_folder += '/'
 
 ### Pastas do dataset
-dataset_folder = '../../00_Datasets/celeba_hq/'
+dataset_root = '../../0_Datasets/celeba_hq/'
 
-train_folder = dataset_folder+'train/'
-test_folder = dataset_folder+'val/'
+train_folder = dataset_root + 'train/'
+test_folder = dataset_root + 'val/'
 
 ### Pastas dos resultados
 result_folder = experiment_folder + 'results-train/'
@@ -155,57 +148,6 @@ if not os.path.exists(model_folder):
 ### Pasta do checkpoint
 checkpoint_dir = experiment_folder + 'checkpoints'
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
-
-#%% FUNÇÕES DE APOIO
-
-def load(image_file):
-    image = tf.io.read_file(image_file)
-    image = tf.image.decode_jpeg(image)
-    image = tf.cast(image, tf.float32)
-    return image
-
-def resize(input_image, height, width):
-    input_image = tf.image.resize(input_image, [height, width], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-    return input_image
-
-def random_crop(input_image):
-    cropped_image = tf.image.random_crop(value = input_image, size = [config.IMG_SIZE, config.IMG_SIZE, 3])
-    return cropped_image
-
-# normalizing the images to [-1, 1]
-def normalize(input_image):
-    input_image = (input_image / 127.5) - 1
-    return input_image
-
-# Equivalente a random_jitter = tf.function(random.jitter)
-@tf.function()
-def random_jitter(input_image):
-    # resizing to 286 x 286 x 3
-    if config.IMG_SIZE == 256:
-        input_image = resize(input_image, 286, 286)
-    elif config.IMG_SIZE == 128:
-        input_image = resize(input_image, 142, 142)
-    
-    # randomly cropping to IMGSIZE x IMGSIZE x 3
-    input_image = random_crop(input_image)
-    
-    if tf.random.uniform(()) > 0.5:
-        # random mirroring
-        input_image = tf.image.flip_left_right(input_image)
-    
-    return input_image
-
-def load_image_train(image_file):
-    input_image = load(image_file)    
-    input_image = random_jitter(input_image)
-    input_image = normalize(input_image)
-    return input_image
-
-def load_image_test(image_file):
-    input_image = load(image_file)    
-    input_image = resize(input_image, config.IMG_SIZE, config.IMG_SIZE)
-    input_image = normalize(input_image)
-    return input_image
 
 #%% DEFINIÇÃO DAS LOSSES
 
@@ -354,7 +296,7 @@ def gradient_penalty_conditional(disc, real_img, generated_img, target):
 #%% FUNÇÕES DO TREINAMENTO
 
 '''
-FUNÇÕES DE TREINAMENTO PARA GERADOR ÚNICO
+FUNÇÕES DE TREINAMENTO ADVERSÁRIO
 '''
 @tf.function
 def train_step(generator, disc, input_image, target):
@@ -408,7 +350,7 @@ def fit(generator, disc, train_ds, first_epoch, epochs, test_ds):
         # Plota e salva um exemplo
         for example_input in test_ds.take(1):
             filename = "test_epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
-            fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
+            fig = utils.generate_images(generator, example_input, result_folder, filename)
 
             # Loga a figura no wandb
             s = "test epoch {}".format(epoch-1)
@@ -420,7 +362,7 @@ def fit(generator, disc, train_ds, first_epoch, epochs, test_ds):
 
         for example_input in train_ds.take(1):
             filename = "train_epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
-            fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
+            fig = utils.generate_images(generator, example_input, result_folder, filename)
 
             # Loga a figura no wandb
             s = "train epoch {}".format(epoch-1)
@@ -461,118 +403,6 @@ def fit(generator, disc, train_ds, first_epoch, epochs, test_ds):
         print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
         wandb.log({'epoch time (s)': dt, 'epoch time (min)': dt/60})
         
-   
-'''
-GERADOR SEPARADO EM ENCODER / DECODER
-'''
-@tf.function
-def train_step_encdec(encoder, decoder, disc, input_image, target):
-    with tf.GradientTape() as enc_tape, tf.GradientTape() as dec_tape, tf.GradientTape() as disc_tape:
-        
-        latent = encoder(input_image, training = True)
-        gen_image = decoder(latent, training = True) 
-        
-        disc_real = disc([input_image, target], training=True)
-        disc_gen = disc([input_image, gen_image], training=True)
-
-        if config.loss_type == 'patchganloss':
-            gen_loss, gen_gan_loss, gen_l1_loss = loss_patchgan_generator(disc_gen, gen_image, target)
-            disc_loss, disc_real_loss, disc_fake_loss = loss_patchgan_discriminator(disc_real, disc_gen)
-    
-        elif config.loss_type == 'wgan':
-            gen_loss, gen_gan_loss, gen_l1_loss = loss_wgan_generator(disc_gen, gen_image, target)
-            disc_loss, disc_real_loss, disc_fake_loss = loss_wgan_discriminator(disc_real, disc_gen)
-
-        elif config.loss_type == 'wgan-gp':
-            gen_loss, gen_gan_loss, gen_l1_loss = loss_wgangp_generator(disc_gen, gen_image, target)
-            disc_loss, disc_real_loss, disc_fake_loss = loss_wgangp_discriminator(disc, disc_real, disc_gen, input_image, gen_image, target)
-    
-        # Incluído o else para não dar erro 'gen_loss' is used before assignment
-        else:
-            gen_loss = 0
-            disc_loss = 0
-            print("Erro de modelo. Selecione uma Loss válida")
-
-    encoder_gradients = enc_tape.gradient(gen_loss, encoder.trainable_variables)
-    decoder_gradients = dec_tape.gradient(gen_loss, decoder.trainable_variables)
-    discriminator_gradients = disc_tape.gradient(disc_loss, disc.trainable_variables)
-    
-    encoder_optimizer.apply_gradients(zip(encoder_gradients, encoder.trainable_variables))
-    decoder_optimizer.apply_gradients(zip(decoder_gradients, decoder.trainable_variables))
-    discriminator_optimizer.apply_gradients(zip(discriminator_gradients, disc.trainable_variables))
-    
-    return (gen_loss, disc_loss, gen_gan_loss, gen_l1_loss, disc_real_loss, disc_fake_loss)
-
-# Função para o encoder/decoder
-def fit_encdec(encoder, decoder, disc, train_ds, first_epoch, epochs, test_ds):
-
-    # Listas para o cálculo da acurácia
-    y_real = []
-    y_pred = []
-
-    # Prepara a progression bar
-    progbar = tf.keras.utils.Progbar(int(ceil(config.TRAIN_SIZE / config.BATCH_SIZE)))
-    
-    ########## LOOP DE TREINAMENTO ##########
-    for epoch in range(first_epoch, epochs+1):
-        t_start = time.time()
-        
-        # Plota e salva um exemplo
-        for example_input in test_ds.take(1):
-            filename = "test_epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
-            fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
-
-            # Loga a figura no wandb
-            s = "test epoch {}".format(epoch-1)
-            wandbfig = wandb.Image(fig, caption="Test Epoch:{}".format(epoch-1))
-            wandb.log({s: wandbfig})
-
-            if config.QUIET_PLOT:
-                plt.close(fig)
-
-        for example_input in train_ds.take(1):
-            filename = "train_epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
-            fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
-
-            # Loga a figura no wandb
-            s = "train epoch {}".format(epoch-1)
-            wandbfig = wandb.Image(fig, caption="Train Epoch:{}".format(epoch-1))
-            wandb.log({s: wandbfig})
-
-            if config.QUIET_PLOT:
-                plt.close(fig)
-
-        print(utils.get_time_string(), " - Epoch: ", epoch)
-        
-        # Train
-        i = 0 # Para o progress bar
-        for n, input_image in train_ds.enumerate():
-
-            # Faz o update da Progress Bar
-            i += 1
-            progbar.update(i)
-            
-            # Step de treinamento
-            target = input_image
-            gen_loss, disc_loss, gen_gan_loss, gen_l1_loss, disc_real_loss, disc_fake_loss = train_step_encdec(encoder, decoder, disc, input_image, target)
-            
-            # Cálculo da acurácia
-            y_real, y_pred, acc = utils.evaluate_accuracy(generator, disc, test_ds, y_real, y_pred)
-
-            # Log as métricas no wandb 
-            wandb.log({ 'gen_loss': gen_loss.numpy(), 'gen_gan_loss': gen_gan_loss.numpy(), 'gen_l1_loss': gen_l1_loss.numpy(),
-                        'disc_loss': disc_loss.numpy(), 'disc_real_loss': disc_real_loss.numpy(), 'disc_fake_loss': disc_fake_loss.numpy(),
-                        'test_accuracy': acc})
-
-        # saving (checkpoint) the model every x epochs
-        if (epoch) % config.CHECKPOINT_EPOCHS == 0:
-            checkpoint.save(file_prefix = checkpoint_prefix)
-            print("\nSalvando checkpoint...")
-        
-        dt = time.time() - t_start
-        print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
-        wandb.log({'epoch time (s)': dt, 'epoch time (min)': dt/60})
-    
 
 '''
 FUNÇÕES DE TREINAMENTO SEM DISCRIMINADOR (ADVERSARIAL = FALSE)
@@ -622,7 +452,7 @@ def fit_nodisc(generator, train_ds, first_epoch, epochs, test_ds):
         # Plota e salva um exemplo
         for example_input in test_ds.take(1):
             filename = "test_epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
-            fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
+            fig = utils.generate_images(generator, example_input, result_folder, filename)
 
             # Loga a figura no wandb
             s = "test epoch {}".format(epoch-1)
@@ -634,7 +464,7 @@ def fit_nodisc(generator, train_ds, first_epoch, epochs, test_ds):
 
         for example_input in train_ds.take(1):
             filename = "train_epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
-            fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
+            fig = utils.generate_images(generator, example_input, result_folder, filename)
 
             # Loga a figura no wandb
             s = "train epoch {}".format(epoch-1)
@@ -702,9 +532,6 @@ elif config.gen_model == 'transfer':
     generator = transfer.transfer_model(config.IMG_SIZE, config.transfer_generator_path, config.transfer_generator_filename, 
     config.transfer_middle_model, config.transfer_encoder_last_layer, config.transfer_decoder_first_layer, config.transfer_trainable,
     config.transfer_disentangle, config.transfer_smooth_vector)
-elif config.gen_model == 'encoder_decoder':
-    encoder = net.resnet_encoder(config.IMG_SIZE)
-    decoder = net.resnet_decoder(config.IMG_SIZE)
 else:
     raise utils.GeneratorError(config.gen_model)
 
@@ -720,12 +547,7 @@ if config.ADVERSARIAL:
         raise utils.DiscriminatorError(config.disc_model)
 
 # Define os otimizadores
-if config.USE_FULL_GENERATOR: 
-    generator_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE_G, beta_1=config.ADAM_BETA_1)
-else:
-    encoder_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE_G, beta_1=config.ADAM_BETA_1)
-    decoder_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE_G, beta_1=config.ADAM_BETA_1)
-
+generator_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE_G, beta_1=config.ADAM_BETA_1)
 if config.ADVERSARIAL:  
     discriminator_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE_D, beta_1=config.ADAM_BETA_1)
 
@@ -734,7 +556,7 @@ if config.ADVERSARIAL:
 # Prepara os inputs
 train_dataset = tf.data.Dataset.list_files(train_folder+'*/*.jpg')
 config.TRAIN_SIZE = len(list(train_dataset))
-train_dataset = train_dataset.map(load_image_train)
+train_dataset = train_dataset.map(lambda x: utils.load_image_train(x, config.IMG_SIZE, 3))
 if config.USE_CACHE:
     train_dataset = train_dataset.cache()
 train_dataset = train_dataset.shuffle(config.BUFFER_SIZE)
@@ -742,27 +564,18 @@ train_dataset = train_dataset.batch(config.BATCH_SIZE)
 
 test_dataset = tf.data.Dataset.list_files(test_folder+'*/*.jpg')
 config.TEST_SIZE = len(list(test_dataset))
-test_dataset = test_dataset.map(load_image_test)
+test_dataset = test_dataset.map(lambda x: utils.load_image_test(x, config.IMG_SIZE))
 test_dataset = test_dataset.batch(config.BATCH_SIZE)
 
 # Prepara o checkpoint
 if config.ADVERSARIAL:
-    if config.USE_FULL_GENERATOR: 
-        # Prepara o checkpoint (gerador)
-        checkpoint = tf.train.Checkpoint(generator_optimizer = generator_optimizer,
-                                        discriminator_optimizer = discriminator_optimizer,
-                                        generator = generator,
-                                        disc = disc)
-    else:
-        # Prepara o checkpoint (encoder/decoder)
-        checkpoint = tf.train.Checkpoint(encoder_optimizer = encoder_optimizer,
-                                    decoder_optimizer = decoder_optimizer,
+    # Prepara o checkpoint (adversário)
+    checkpoint = tf.train.Checkpoint(generator_optimizer = generator_optimizer,
                                     discriminator_optimizer = discriminator_optimizer,
-                                    encoder = encoder,
-                                    decoder = decoder,
+                                    generator = generator,
                                     disc = disc)
 else:
-    # Prepara o checkpoint (nodisc)
+    # Prepara o checkpoint (não adversário)
     checkpoint = tf.train.Checkpoint(generator_optimizer = generator_optimizer,
                                     generator = generator)
 
@@ -777,27 +590,15 @@ if config.LOAD_CHECKPOINT:
         config.FIRST_EPOCH = 1
         
 # Salva o gerador e o discriminador (principalmente para visualização)
-if config.USE_FULL_GENERATOR: 
-    generator.save(model_folder+'ae_generator.h5')
-else:
-    encoder.save(model_folder+'ae_encoder.h5')
-    decoder.save(model_folder+'ae_decoder.h5')
-
+generator.save(model_folder+'ae_generator.h5')
 if config.ADVERSARIAL:
     disc.save(model_folder+'ae_discriminator.h5')
-
 
 #%% TREINAMENTO
 
 if config.FIRST_EPOCH <= config.EPOCHS:
-    
     if config.ADVERSARIAL:
-        if config.USE_FULL_GENERATOR: 
-            fit(generator, disc, train_dataset, config.FIRST_EPOCH, config.EPOCHS, test_dataset)
-        elif (not config.USE_FULL_GENERATOR):
-            fit_encdec(encoder, decoder, disc, train_dataset, config.FIRST_EPOCH, config.EPOCHS, test_dataset)
-        else:
-            raise utils.LossError(config.loss_type)
+        fit(generator, disc, train_dataset, config.FIRST_EPOCH, config.EPOCHS, test_dataset)
     else:
         fit_nodisc(generator, train_dataset, config.FIRST_EPOCH, config.EPOCHS, test_dataset)
 
@@ -806,7 +607,7 @@ if config.FIRST_EPOCH <= config.EPOCHS:
 ## Após o treinamento, loga uma imagem do dataset de teste para ver como ficou
 for example_input in test_dataset.take(1):
     filename = "epoch_" + str(config.EPOCHS).zfill(len(str(config.EPOCHS))) + ".jpg"
-    fig = utils.generate_save_images_gen(generator, example_input, result_folder, filename)
+    fig = utils.generate_images(generator, example_input, result_folder, filename)
 
     # Loga a figura no wandb
     s = "epoch {}".format(config.EPOCHS)
@@ -821,21 +622,13 @@ c = 1
 if config.NUM_TEST_PRINTS > 0:
     for img in test_dataset.take(config.NUM_TEST_PRINTS):
         filename = "test_results_" + str(c).zfill(len(str(config.NUM_TEST_PRINTS))) + ".jpg"
-        if config.USE_FULL_GENERATOR: 
-            utils.generate_save_images_gen(generator, img, result_test_folder, filename)
-        else:
-            utils.generate_save_images(encoder, decoder, img, result_test_folder, filename)
+        utils.generate_images(generator, img, result_test_folder, filename)
         c = c + 1
 if config.QUIET_PLOT:
     plt.close("all")
 
 ## Salva os modelos 
-if config.USE_FULL_GENERATOR: 
-    generator.save(model_folder+'ae_generator.h5')
-else:
-    encoder.save(model_folder+'ae_encoder.h5')
-    decoder.save(model_folder+'ae_decoder.h5')
-
+generator.save(model_folder+'ae_generator.h5')
 if config.ADVERSARIAL:
     disc.save(model_folder+'ae_discriminator.h5')
 

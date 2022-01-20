@@ -245,77 +245,6 @@ def unet_generator(IMG_SIZE):
     return tf.keras.Model(inputs=inputs, outputs=x)
 
 
-def resnet_encoder(IMG_SIZE):
-    
-    '''
-    Adaptado do gerador utilizado nos papers Pix2Pix e CycleGAN
-    '''
-    
-    # Inicializa a rede
-    inputs = tf.keras.layers.Input(shape = [IMG_SIZE , IMG_SIZE , 3])
-    x = inputs
-    
-    # Primeiras camadas (pré blocos residuais)
-    x = tf.keras.layers.ZeroPadding2D([[3, 3],[3, 3]])(x)
-    x = tf.keras.layers.Conv2D(filters = 64, kernel_size = (7, 7) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    #--
-    x = tf.keras.layers.Conv2D(filters = 128, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-    #--
-    x = tf.keras.layers.Conv2D(filters = 256, kernel_size = (3, 3) , strides = (2, 2), padding = "valid", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block(x, 256)
-
-    # Camadas finais
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    #x = tf.keras.layers.Flatten()(x)
-    x = tf.keras.layers.Dense(units = 512, activation = 'softmax')(x)    
-
-    # Cria o modelo
-    return tf.keras.Model(inputs = inputs, outputs = x)
-
-
-def resnet_decoder(IMG_SIZE):
-    
-    '''
-    Adaptado do gerador utilizado nos papers Pix2Pix e CycleGAN
-    '''
-    
-    # Inicializa a rede
-    inputs = tf.keras.layers.Input(shape = [512])
-    x = tf.expand_dims(inputs, axis = 1)
-    x = tf.expand_dims(x, axis = 1)
-    
-    # Reconstrução da imagem
-    if IMG_SIZE == 256:
-        x = upsample(x, 512)
-    x = upsample(x, 512)
-    x = upsample(x, 512)
-    x = upsample(x, 512)
-    x = upsample(x, 256)
-    x = upsample(x, 128)
-    x = upsample(x, 64)
-    
-    # Última camada
-    x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (3, 3) , strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
-    x = norm_layer()(x)
-    x = tf.keras.layers.Activation('tanh')(x)
-
-    # print(x.shape)
-    
-    # Cria o modelo
-    return tf.keras.Model(inputs = inputs, outputs = x)    
-
-
 def resnet_generator(IMG_SIZE, create_latent_vector = False):
     
     '''
@@ -794,8 +723,6 @@ if __name__ == "__main__":
         print("U-Net                                ", unet_generator(IMG_SIZE).output.shape)
         print("ResNet                               ", resnet_generator(IMG_SIZE, create_latent_vector = False).output.shape)
         print("ResNet adaptado                      ", resnet_generator(IMG_SIZE, create_latent_vector = True).output.shape)
-        print("ResNet encoder                       ", resnet_encoder(IMG_SIZE).output.shape)
-        print("ResNet decoder                       ", resnet_decoder(IMG_SIZE).output.shape)
         print("Full ResNet                          ", full_resnet_generator(IMG_SIZE).output.shape)
         print("Full ResNet Disentangled             ", full_resnet_generator(IMG_SIZE, disentanglement = 'normal').output.shape)
         print("Full ResNet Smooth Disentangle       ", full_resnet_generator(IMG_SIZE, disentanglement = 'smooth').output.shape)
