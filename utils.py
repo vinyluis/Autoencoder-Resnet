@@ -14,6 +14,15 @@ from sklearn.metrics import accuracy_score as accuracy
 
 #%% FUNÇÕES DE APOIO
 
+def dict_tensor_to_numpy(tensor_dict):
+    numpy_dict = {}
+    for k in tensor_dict.keys():
+        try:
+            numpy_dict[k] = tensor_dict[k].numpy()
+        except:
+            numpy_dict[k] = tensor_dict[k]
+    return numpy_dict
+
 def get_time_string(mode = "complete", days_offset = 0):
     # Prepara a string de data e hora conforme necessário
 

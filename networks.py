@@ -45,7 +45,6 @@ def upsample(x, filters, kernel_size = (3, 3), apply_dropout = False):
     x = tf.keras.layers.ReLU()(x)
     return x
 
-
 def downsample(x, filters, kernel_size = (3, 3), apply_norm = True):
     # Reconstrução da imagem, baseada na Pix2Pix / CycleGAN    
     x = tf.keras.layers.Conv2D(filters = filters, kernel_size = kernel_size, strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
@@ -53,7 +52,6 @@ def downsample(x, filters, kernel_size = (3, 3), apply_norm = True):
         x = norm_layer()(x)
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
     return x
-
 
 def resnet_block(input_tensor, filters):
     
@@ -80,7 +78,6 @@ def resnet_block(input_tensor, filters):
     
     return x
 
-
 def resnet_block_transpose(input_tensor, filters):
     
     ''' 
@@ -105,7 +102,6 @@ def resnet_block_transpose(input_tensor, filters):
     x = tf.keras.layers.Activation('relu')(x)
     
     return x
-
 
 def resnet_bottleneck_block(input_tensor, filters):
     
@@ -136,7 +132,6 @@ def resnet_bottleneck_block(input_tensor, filters):
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
     
     return x
-
 
 def resnet_downsample_bottleneck_block(input_tensor, filters):
     
@@ -179,12 +174,10 @@ def simple_upsample(x, scale = 2, interpolation = 'bilinear'):
     x = tf.keras.layers.UpSampling2D(size = (scale, scale), interpolation = interpolation)(x)
     return x
 
-
 def simple_downsample(x, scale = 2):
     # Faz um downsample simplificado, baseado no Progressive Growth of GANs
     x = tf.keras.layers.AveragePooling2D(pool_size = (scale, scale))(x)
     return x
-
 
 def simple_upsample_block(x, filters, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear'):
     
@@ -243,7 +236,6 @@ def unet_generator(IMG_SIZE):
     x = tf.keras.layers.Conv2DTranspose(3, 4, strides=2, padding='same', kernel_initializer=initializer, activation='tanh')(x)
 
     return tf.keras.Model(inputs=inputs, outputs=x)
-
 
 def resnet_generator(IMG_SIZE, create_latent_vector = False):
     
@@ -467,7 +459,6 @@ def full_resnet_generator(IMG_SIZE, disentanglement = 'none'):
     # Cria o modelo
     return tf.keras.Model(inputs = inputs, outputs = x)
 
-
 def simple_decoder_generator(IMG_SIZE, disentanglement = 'none'):
 
     '''
@@ -566,7 +557,6 @@ def simple_decoder_generator(IMG_SIZE, disentanglement = 'none'):
     # Cria o modelo
     return tf.keras.Model(inputs = inputs, outputs = x)
 
-
 #%% DISCRIMINADORES
 
 def patchgan_discriminator(IMG_SIZE, constrained = False):
@@ -608,7 +598,6 @@ def patchgan_discriminator(IMG_SIZE, constrained = False):
     # print(x.shape)
 
     return tf.keras.Model(inputs=[inp, tar], outputs=x)
-
 
 def progan_discriminator(IMG_SIZE, constrained = False, output_type = 'unit'):
 
@@ -710,7 +699,6 @@ def progan_discriminator(IMG_SIZE, constrained = False, output_type = 'unit'):
 
     return tf.keras.Model(inputs=[inp, tar], outputs=x)
 
-
 #%% TESTA
 
 #  Só roda quando este arquivo for chamado como main
@@ -733,9 +721,3 @@ if __name__ == "__main__":
         print("PatchGAN                             ", patchgan_discriminator(IMG_SIZE).output.shape)
         print("ProGAN (output_type = unit)          ", progan_discriminator(IMG_SIZE, output_type='unit').output.shape)
         print("ProGAN (output_type = patchgan)      ", progan_discriminator(IMG_SIZE, output_type='patchgan').output.shape)
-
-# gen_normal = resnet_adapted_generator(128, create_latent_vector = False)
-# gen_normal.save("gen_normal_new.h5")
-
-# gen_adapted = resnet_adapted_generator(128, create_latent_vector = True)
-# gen_adapted.save("gen_adapted_new.h5")

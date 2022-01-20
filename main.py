@@ -43,9 +43,9 @@ config.BUFFER_SIZE = 150
 config.IMG_SIZE = 128
 config.LEARNING_RATE_G = 1e-5
 config.LEARNING_RATE_D = 1e-5
-config.EPOCHS = 3
+config.EPOCHS = 5
 config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
-# config.ADAM_BETA_1 = 0.5 #0.5 para a PatchGAN e 0.9 para a WGAN - Definido no código
+# config.ADAM_BETA_1 = 0.5 # 0.5 para a PatchGAN e 0.9 para a WGAN - Definido no código
 # config.FIRST_EPOCH = 1 # Definido em código, no checkpoint
 config.USE_CACHE = True
 
@@ -63,11 +63,11 @@ config.KEEP_CHECKPOINTS = 2
 # Código do experimento (se não houver, deixar "")
 config.exp = ""
 
-# Modelo do gerador. Possíveis = 'unet', 'resnet', 'resnet_vetor', 'full_resnet', 'simple_decoder', 
-# 'full_resnet_dis', 'simple_decoder_dis', 'full_resnet_smooth', 'simple_decoder_smooth', 'transfer',
+# Modelo do gerador. Possíveis = 'unet', 'resnet', 'resnet_vetor', 'full_resnet', 'full_resnet_dis', 'full_resnet_smooth',
+#                                'simple_decoder', 'simple_decoder_dis', 'simple_decoder_smooth', 'transfer'
 config.gen_model = 'unet'
 
-# Modelo do discriminador. Possíveis = 'patchgan', 'progan_adapted', 'progan'
+# Modelo do discriminador. Possíveis = 'patchgan', 'progan', 'progan_adapted'
 config.disc_model = 'patchgan'
 
 # Tipo de loss. Possíveis = 'patchganloss', 'wgan', 'wgan-gp', 'l1', 'l2'
@@ -296,16 +296,16 @@ def gradient_penalty_conditional(disc, real_img, generated_img, target):
 #%% FUNÇÕES DO TREINAMENTO
 
 '''
-FUNÇÕES DE TREINAMENTO ADVERSÁRIO
+FUNÇÕES DE TREINAMENTO 
 '''
 @tf.function
-def train_step(generator, disc, input_image, target):
+def train_step(generator, discriminator, input_image, target):
     with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
         
         gen_image = generator(input_image, training = True)
     
-        disc_real = disc([input_image, target], training=True)
-        disc_gen = disc([gen_image, target], training=True)
+        disc_real = discriminator([input_image, target], training=True)
+        disc_gen = discriminator([gen_image, target], training=True)
 
         if config.loss_type == 'patchganloss':
             gen_loss, gen_gan_loss, gen_l1_loss = loss_patchgan_generator(disc_gen, gen_image, target)
@@ -331,112 +331,52 @@ def train_step(generator, disc, input_image, target):
     generator_optimizer.apply_gradients(zip(generator_gradients, generator.trainable_variables))
     discriminator_optimizer.apply_gradients(zip(discriminator_gradients, disc.trainable_variables))
     
-    return (gen_loss, disc_loss, gen_gan_loss, gen_l1_loss, disc_real_loss, disc_fake_loss)
+    # Cria um dicionário das losses
+    losses = {
+        'gen_total_loss' : gen_loss,
+        'gen_gan_loss' : gen_gan_loss,
+        'gen_l1_loss' : gen_l1_loss,
+        'disc_total_loss': disc_loss,
+        'disc_real_loss' : disc_real_loss,
+        'disc_fake_loss' : disc_fake_loss,
+    }
 
-# Função para o gerador
-def fit(generator, disc, train_ds, first_epoch, epochs, test_ds):
-    
-    # Listas para o cálculo da acurácia
-    y_real = []
-    y_pred = []
+    return losses
 
-    # Prepara a progression bar
-    progbar = tf.keras.utils.Progbar(int(ceil(config.TRAIN_SIZE / config.BATCH_SIZE)))
-
-    ########## LOOP DE TREINAMENTO ##########
-    for epoch in range(first_epoch, epochs+1):
-        t_start = time.time()
-        
-        # Plota e salva um exemplo
-        for example_input in test_ds.take(1):
-            filename = "test_epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
-            fig = utils.generate_images(generator, example_input, result_folder, filename)
-
-            # Loga a figura no wandb
-            s = "test epoch {}".format(epoch-1)
-            wandbfig = wandb.Image(fig, caption="Test Epoch:{}".format(epoch-1))
-            wandb.log({s: wandbfig})
-
-            if config.QUIET_PLOT:
-                plt.close(fig)
-
-        for example_input in train_ds.take(1):
-            filename = "train_epoch_" + str(epoch-1).zfill(len(str(config.EPOCHS))) + ".jpg"
-            fig = utils.generate_images(generator, example_input, result_folder, filename)
-
-            # Loga a figura no wandb
-            s = "train epoch {}".format(epoch-1)
-            wandbfig = wandb.Image(fig, caption="Train Epoch:{}".format(epoch-1))
-            wandb.log({s: wandbfig})
-
-            if config.QUIET_PLOT:
-                plt.close(fig)
-
-        print(utils.get_time_string(), " - Epoch: ", epoch)
-        
-        # Train
-        i = 0 # Para o progress bar
-        for n, input_image in train_ds.enumerate():
-
-            # Faz o update da Progress Bar
-            i += 1
-            progbar.update(i)
-            
-            # Step de treinamento
-            target = input_image
-            gen_loss, disc_loss, gen_gan_loss, gen_l1_loss, disc_real_loss, disc_fake_loss = train_step(generator, disc, input_image, target)
-
-            # Cálculo da acurácia
-            y_real, y_pred, acc = utils.evaluate_accuracy(generator, disc, test_ds, y_real, y_pred)
-
-            # Log as métricas no wandb 
-            wandb.log({ 'gen_loss': gen_loss.numpy(), 'gen_gan_loss': gen_gan_loss.numpy(), 'gen_l1_loss': gen_l1_loss.numpy(),
-                        'disc_loss': disc_loss.numpy(), 'disc_real_loss': disc_real_loss.numpy(), 'disc_fake_loss': disc_fake_loss.numpy(),
-                        'test_accuracy': acc})   
-            
-        # saving (checkpoint) the model every x epochs
-        if (epoch) % config.CHECKPOINT_EPOCHS == 0:
-            checkpoint.save(file_prefix = checkpoint_prefix)
-            print("\nSalvando checkpoint...")
-
-        dt = time.time() - t_start
-        print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
-        wandb.log({'epoch time (s)': dt, 'epoch time (min)': dt/60})
-        
-
-'''
-FUNÇÕES DE TREINAMENTO SEM DISCRIMINADOR (ADVERSARIAL = FALSE)
-'''
 @tf.function
-def train_step_nodisc(generator, input_image, target):
+def train_step_not_adversarial(generator, input_image, target):
     with tf.GradientTape() as gen_tape:
         
         gen_image = generator(input_image, training = True)
 
         if config.loss_type == 'l1':
             gen_loss, gen_gan_loss, gen_l1_loss = loss_l1_generator(gen_image, target)
-            disc_loss = 0
-            disc_real_loss = 0
-            disc_fake_loss = 0
 
         elif config.loss_type == 'l2':
             gen_loss, gen_gan_loss, gen_l1_loss = loss_l2_generator(gen_image, target)
-            disc_loss = 0
-            disc_real_loss = 0
-            disc_fake_loss = 0
             
         # Incluído o else para não dar erro 'gen_loss' is used before assignment
         else:
             gen_loss = 0
-            disc_loss = 0
             print("Erro de modelo. Selecione uma Loss válida")
 
     generator_gradients = gen_tape.gradient(gen_loss, generator.trainable_variables)
     generator_optimizer.apply_gradients(zip(generator_gradients, generator.trainable_variables))
-    
-    return (gen_loss, disc_loss, gen_gan_loss, gen_l1_loss, disc_real_loss, disc_fake_loss)
 
-def fit_nodisc(generator, train_ds, first_epoch, epochs, test_ds):
+    # Cria um dicionário das losses
+    losses = {
+        'gen_total_loss' : gen_loss,
+        'gen_l1_loss' : gen_l1_loss
+    }
+    
+    return losses
+
+def fit(generator, discriminator, train_ds, first_epoch, epochs, test_ds, adversarial = True):
+    
+    # Verifica se o discriminador existe, caso seja treinamento adversário
+    if adversarial == True:
+        if discriminator == None:
+            raise BaseException("Erro! Treinamento adversário precisa de um discriminador")
 
     # Listas para o cálculo da acurácia
     y_real = []
@@ -444,7 +384,7 @@ def fit_nodisc(generator, train_ds, first_epoch, epochs, test_ds):
 
     # Prepara a progression bar
     progbar = tf.keras.utils.Progbar(int(ceil(config.TRAIN_SIZE / config.BATCH_SIZE)))
-    
+
     ########## LOOP DE TREINAMENTO ##########
     for epoch in range(first_epoch, epochs+1):
         t_start = time.time()
@@ -486,22 +426,29 @@ def fit_nodisc(generator, train_ds, first_epoch, epochs, test_ds):
             
             # Step de treinamento
             target = input_image
-            gen_loss, disc_loss, gen_gan_loss, gen_l1_loss, disc_real_loss, disc_fake_loss = train_step_nodisc(generator, input_image, target)
+
+            if adversarial == True:
+                # Realiza o step de treino adversário
+                losses = train_step(generator, discriminator, input_image, target)
+                # Cálculo da acurácia
+                y_real, y_pred, acc = utils.evaluate_accuracy(generator, discriminator, test_ds, y_real, y_pred)
+                losses['target_accuracy'] = acc
+            else:
+                # Realiza o step de treino não adversário
+                losses = train_step_not_adversarial(generator, input_image, target)
 
             # Log as métricas no wandb 
-            wandb.log({ 'gen_loss': gen_loss.numpy(), 'gen_gan_loss': gen_gan_loss.numpy(), 'gen_l1_loss': gen_l1_loss.numpy(),
-                        'disc_loss': disc_loss.numpy(), 'disc_real_loss': disc_real_loss.numpy(), 'disc_fake_loss': disc_fake_loss.numpy()})
+            wandb.log(utils.dict_tensor_to_numpy(losses))   
             
         # saving (checkpoint) the model every x epochs
         if (epoch) % config.CHECKPOINT_EPOCHS == 0:
             checkpoint.save(file_prefix = checkpoint_prefix)
             print("\nSalvando checkpoint...")
-            
+
         dt = time.time() - t_start
         print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
         wandb.log({'epoch time (s)': dt, 'epoch time (min)': dt/60})
-         
-
+        
 #%% PREPARAÇÃO DOS MODELOS
 
 # Define se irá ter a restrição de tamanho de peso da WGAN (clipping)
@@ -545,6 +492,8 @@ if config.ADVERSARIAL:
         disc = net.progan_discriminator(config.IMG_SIZE, constrained = constrained, output_type = 'unit')
     else:
         raise utils.DiscriminatorError(config.disc_model)
+else:
+    disc = None
 
 # Define os otimizadores
 generator_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE_G, beta_1=config.ADAM_BETA_1)
@@ -597,10 +546,7 @@ if config.ADVERSARIAL:
 #%% TREINAMENTO
 
 if config.FIRST_EPOCH <= config.EPOCHS:
-    if config.ADVERSARIAL:
-        fit(generator, disc, train_dataset, config.FIRST_EPOCH, config.EPOCHS, test_dataset)
-    else:
-        fit_nodisc(generator, train_dataset, config.FIRST_EPOCH, config.EPOCHS, test_dataset)
+    fit(generator, disc, train_dataset, config.FIRST_EPOCH, config.EPOCHS, test_dataset, adversarial = config.ADVERSARIAL)
 
 #%% VALIDAÇÃO
 
