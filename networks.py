@@ -34,7 +34,7 @@ class ClipConstraint(Constraint):
 
 #%% BLOCOS 
 
-## Resnet e U-Net
+## Básicos
 
 def upsample(x, filters, kernel_size = (3, 3), apply_dropout = False):
     # Reconstrução da imagem, baseada na Pix2Pix / CycleGAN
@@ -53,7 +53,9 @@ def downsample(x, filters, kernel_size = (3, 3), apply_norm = True):
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
     return x
 
-def resnet_block(input_tensor, filters):
+## Residuais
+
+def residual_block(input_tensor, filters):
     
     ''' 
     Cria um bloco resnet baseado na Resnet34
@@ -78,7 +80,7 @@ def resnet_block(input_tensor, filters):
     
     return x
 
-def resnet_block_transpose(input_tensor, filters):
+def residual_block_transpose(input_tensor, filters):
     
     ''' 
     Cria um bloco resnet baseado na Resnet34, mas invertido (convoluções transpostas)
@@ -103,7 +105,7 @@ def resnet_block_transpose(input_tensor, filters):
     
     return x
 
-def resnet_bottleneck_block(input_tensor, filters):
+def residual_bottleneck_block(input_tensor, filters):
     
     ''' 
     Cria um bloco resnet bottleneck, baseado na Resnet50
@@ -133,7 +135,7 @@ def resnet_bottleneck_block(input_tensor, filters):
     
     return x
 
-def resnet_downsample_bottleneck_block(input_tensor, filters):
+def residual_downsample_bottleneck_block(input_tensor, filters):
     
     ''' 
     Cria um bloco resnet bottleneck, com redução de dimensão, baseado na Resnet50
@@ -167,7 +169,7 @@ def resnet_downsample_bottleneck_block(input_tensor, filters):
     
     return x
 
-## Simple decoder
+## Simple Decoder
 
 def simple_upsample(x, scale = 2, interpolation = 'bilinear'):
     # Faz um umpsample simplificado, baseado no Progressive Growth of GANs
@@ -195,6 +197,38 @@ def simple_upsample_block(x, filters, scale = 2, kernel_size = (3, 3), interpola
 
 
 #%% GERADORES
+
+def pix2pix_generator(IMG_SIZE):
+
+    # Define os inputs
+    inputs = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, 3])
+
+    # Encoder
+    x = inputs
+    x = downsample(x, 64, 4, apply_norm = False)
+    x = downsample(x, 128, 4)
+    x = downsample(x, 256, 4)
+    x = downsample(x, 512, 4)
+    x = downsample(x, 512, 4)
+    x = downsample(x, 512, 4)
+    x = downsample(x, 512, 4)
+    if IMG_SIZE == 256:
+        x = downsample(x, 512, 4)
+
+    # Decoder
+    x = upsample(x, 512, 4, apply_dropout=True)
+    x = upsample(x, 512, 4, apply_dropout=True)
+    x = upsample(x, 512, 4, apply_dropout=True)
+    if IMG_SIZE == 256:
+        x = upsample(x, 512, 4)
+    x = upsample(x, 256, 4)
+    x = upsample(x, 128, 4)
+    x = upsample(x, 64, 4)
+
+    initializer = tf.random_normal_initializer(0., 0.02)
+    x = tf.keras.layers.Conv2DTranspose(3, 4, strides=2, padding='same', kernel_initializer=initializer, activation='tanh')(x)
+
+    return tf.keras.Model(inputs=inputs, outputs=x)
 
 def unet_generator(IMG_SIZE):
 
@@ -237,7 +271,7 @@ def unet_generator(IMG_SIZE):
 
     return tf.keras.Model(inputs=inputs, outputs=x)
 
-def resnet_generator(IMG_SIZE, create_latent_vector = False):
+def cyclegan_generator(IMG_SIZE, create_latent_vector = False, num_residual_blocks = 9):
     
     '''
     Adaptado do gerador utilizado nos papers Pix2Pix e CycleGAN
@@ -264,9 +298,9 @@ def resnet_generator(IMG_SIZE, create_latent_vector = False):
     x = norm_layer()(x)
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
     
-    # Blocos Resnet
-    for i in range(9):
-        x = resnet_block(x, 256)
+    # Blocos Residuais
+    for i in range(num_residual_blocks):
+        x = residual_block(x, 256)
     
     # Criação do vetor latente
     if create_latent_vector:
@@ -331,7 +365,7 @@ def resnet_generator(IMG_SIZE, create_latent_vector = False):
 
 # Modelos customizados
 
-def full_resnet_generator(IMG_SIZE, disentanglement = 'none'):
+def full_residual_generator(IMG_SIZE, disentanglement = 'none'):
 
     '''
     Adaptado com base no gerador Resnet da Pix2Pix
@@ -359,9 +393,9 @@ def full_resnet_generator(IMG_SIZE, disentanglement = 'none'):
     x = norm_layer()(x)
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
     
-    # Blocos Resnet
+    # Blocos Residuais
     for i in range(9):
-        x = resnet_block(x, 256)
+        x = residual_block(x, 256)
     
     # Criação do vetor latente 
     vecsize = 512
@@ -432,9 +466,9 @@ def full_resnet_generator(IMG_SIZE, disentanglement = 'none'):
     x = norm_layer()(x)
     x = tf.keras.layers.ReLU()(x)
     
-    # Blocos Resnet
+    # Blocos Residuais
     for i in range(9):
-        x = resnet_block_transpose(x, 256)
+        x = residual_block_transpose(x, 256)
     
     # Reconstrução pós blocos residuais
     
@@ -487,9 +521,9 @@ def simple_decoder_generator(IMG_SIZE, disentanglement = 'none'):
     x = norm_layer()(x)
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
     
-    # Blocos Resnet
+    # Blocos Residuais
     for i in range(9):
-        x = resnet_block(x, 256)
+        x = residual_block(x, 256)
     
     # Criação do vetor latente 
     vecsize = 512
@@ -708,12 +742,13 @@ if __name__ == "__main__":
     for IMG_SIZE in [256, 128]:
         print(f"\n---- IMG_SIZE = {IMG_SIZE}")
         print("Geradores:")
+        print("Pix2Pix                              ", pix2pix_generator(IMG_SIZE).output.shape)
         print("U-Net                                ", unet_generator(IMG_SIZE).output.shape)
-        print("ResNet                               ", resnet_generator(IMG_SIZE, create_latent_vector = False).output.shape)
-        print("ResNet adaptado                      ", resnet_generator(IMG_SIZE, create_latent_vector = True).output.shape)
-        print("Full ResNet                          ", full_resnet_generator(IMG_SIZE).output.shape)
-        print("Full ResNet Disentangled             ", full_resnet_generator(IMG_SIZE, disentanglement = 'normal').output.shape)
-        print("Full ResNet Smooth Disentangle       ", full_resnet_generator(IMG_SIZE, disentanglement = 'smooth').output.shape)
+        print("CycleGAN generator                   ", cyclegan_generator(IMG_SIZE, create_latent_vector = False).output.shape)
+        print("CycleGAN generator adaptado          ", cyclegan_generator(IMG_SIZE, create_latent_vector = True).output.shape)
+        print("Full Residual                        ", full_residual_generator(IMG_SIZE).output.shape)
+        print("Full Residual Disentangled           ", full_residual_generator(IMG_SIZE, disentanglement = 'normal').output.shape)
+        print("Full Residual Smooth Disentangle     ", full_residual_generator(IMG_SIZE, disentanglement = 'smooth').output.shape)
         print("Simple Decoder                       ", simple_decoder_generator(IMG_SIZE).output.shape)
         print("Simple Decoder Disentangled          ", simple_decoder_generator(IMG_SIZE, disentanglement = 'normal').output.shape)
         print("Simple Decoder Smooth Disentangle    ", simple_decoder_generator(IMG_SIZE, disentanglement = 'smooth').output.shape)

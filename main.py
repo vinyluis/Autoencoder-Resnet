@@ -48,6 +48,7 @@ config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
 # config.ADAM_BETA_1 = 0.5 # 0.5 para a PatchGAN e 0.9 para a WGAN - Definido no código
 # config.FIRST_EPOCH = 1 # Definido em código, no checkpoint
 config.USE_CACHE = True
+config.NUM_RESIDUAL_BLOCKS = 9 # Número de blocos residuais do gerador CycleGAN
 
 # Parâmetros de plot
 config.QUIET_PLOT = True
@@ -63,7 +64,7 @@ config.KEEP_CHECKPOINTS = 2
 # Código do experimento (se não houver, deixar "")
 config.exp = ""
 
-# Modelo do gerador. Possíveis = 'unet', 'resnet', 'resnet_vetor', 'full_resnet', 'full_resnet_dis', 'full_resnet_smooth',
+# Modelo do gerador. Possíveis = 'pix2pix', 'unet', 'cyclegan', 'cyclegan_vetor', 'full_residual', 'full_residual_dis', 'full_residual_smooth',
 #                                'simple_decoder', 'simple_decoder_dis', 'simple_decoder_smooth', 'transfer'
 config.gen_model = 'unet'
 
@@ -105,6 +106,10 @@ else:
 if not(config.IMG_SIZE == 256 or config.IMG_SIZE == 128):
     raise utils.sizeCompatibilityError(config.IMG_SIZE)
 
+# Valida se o número de blocos residuais é válido para o gerador CycleGAN
+if config.gen_model == 'cyclegan':
+    if not (config.NUM_RESIDUAL_BLOCKS == 6 or config.NUM_RESIDUAL_BLOCKS == 9):
+        raise BaseException("O número de blocos residuais do gerador CycleGAN não está correto. Opções = 6 ou 9.")
 
 #%% Prepara as pastas
 
@@ -457,18 +462,20 @@ if config.loss_type == 'wgan':
         constrained = True
 
 # CRIANDO O MODELO DE GERADOR
-if config.gen_model == 'unet':
+if config.gen_model == 'pix2pix':
+    generator = net.pix2pix_generator(config.IMG_SIZE)
+elif config.gen_model == 'unet':
     generator = net.unet_generator(config.IMG_SIZE)
-elif config.gen_model == 'resnet':
-    generator = net.resnet_generator(config.IMG_SIZE)
-elif config.gen_model == 'resnet_vetor': 
-    generator = net.resnet_generator(config.IMG_SIZE, create_latent_vector = True)
-elif config.gen_model == 'full_resnet':
-    generator = net.full_resnet_generator(config.IMG_SIZE)
-elif config.gen_model == 'full_resnet_dis':
-    generator = net.full_resnet_generator(config.IMG_SIZE, disentanglement = 'normal')
-elif config.gen_model == 'full_resnet_smooth':
-    generator = net.full_resnet_generator(config.IMG_SIZE, disentanglement = 'smooth')
+elif config.gen_model == 'cyclegan':
+    generator = net.cyclegan_generator(config.IMG_SIZE, num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
+elif config.gen_model == 'cyclegan_vetor': 
+    generator = net.cyclegan_generator(config.IMG_SIZE, create_latent_vector = True, num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
+elif config.gen_model == 'full_residual':
+    generator = net.full_residual_generator(config.IMG_SIZE)
+elif config.gen_model == 'full_residual_dis':
+    generator = net.full_residual_generator(config.IMG_SIZE, disentanglement = 'normal')
+elif config.gen_model == 'full_residual_smooth':
+    generator = net.full_residual_generator(config.IMG_SIZE, disentanglement = 'smooth')
 elif config.gen_model == 'simple_decoder':
     generator = net.simple_decoder_generator(config.IMG_SIZE)
 elif config.gen_model == 'simple_decoder_dis':
@@ -539,9 +546,9 @@ if config.LOAD_CHECKPOINT:
         config.FIRST_EPOCH = 1
         
 # Salva o gerador e o discriminador (principalmente para visualização)
-generator.save(model_folder+'ae_generator.h5')
+generator.save(model_folder+'generator.h5')
 if config.ADVERSARIAL:
-    disc.save(model_folder+'ae_discriminator.h5')
+    disc.save(model_folder+'discriminator.h5')
 
 #%% TREINAMENTO
 
@@ -574,8 +581,8 @@ if config.QUIET_PLOT:
     plt.close("all")
 
 ## Salva os modelos 
-generator.save(model_folder+'ae_generator.h5')
+generator.save(model_folder+'generator.h5')
 if config.ADVERSARIAL:
-    disc.save(model_folder+'ae_discriminator.h5')
+    disc.save(model_folder+'discriminator.h5')
 
 wandb.finish()
