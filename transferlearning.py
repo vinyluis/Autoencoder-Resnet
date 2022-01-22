@@ -58,7 +58,7 @@ def simple_upsample(x, scale = 2, interpolation = 'bilinear', name_prefix = None
 
     return x
 
-def VT_simple_upsample_block(x, filters, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear', name_prefix = None, name_suffix = None):
+def simple_upsample_block(x, filters, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear', name_prefix = None, name_suffix = None):
     
     if name_prefix == None or name_suffix == None:
 
@@ -128,7 +128,7 @@ def get_decoder(generator, encoder_last_layer, decoder_first_layer, trainable):
     decoder.trainable = trainable
     return decoder
 
-def transfer_model(IMG_SIZE, generator_path, generator_filename, middle_model, encoder_last_layer, decoder_first_layer, transfer_trainable,
+def transfer_model(IMG_SIZE, OUTPUT_CHANNELS, generator_path, generator_filename, middle_model, encoder_last_layer, decoder_first_layer, transfer_trainable,
                     disentangle = False, smooth_vector = False):
     '''
     Carrega o modelo, separa em encoder e decoder, insere um modelo no meio e retorna o modelo final
@@ -139,7 +139,7 @@ def transfer_model(IMG_SIZE, generator_path, generator_filename, middle_model, e
     decoder = get_decoder(generator, encoder_last_layer, decoder_first_layer, transfer_trainable)
 
     # Cria o modelo final
-    inputlayer = tf.keras.layers.Input(shape=(IMG_SIZE, IMG_SIZE, 3), name = 'transfer_model_input')
+    inputlayer = tf.keras.layers.Input(shape=(IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS), name = 'transfer_model_input')
     x = encoder(inputlayer)
     if middle_model != None:
         x = include_vector_resnet(IMG_SIZE, middle_model, disentangle, smooth_vector)(x)
@@ -150,7 +150,6 @@ def transfer_model(IMG_SIZE, generator_path, generator_filename, middle_model, e
 
 
 #%% MODELOS DE "MEIO"
-
 
 def include_vector_resnet(IMG_SIZE, upsample, disentangle = False, smooth = False, vecsize = 512):
     # Apenas cria a redução para o vetor latente e depois retorna para a dimensão (31, 31, 256)
@@ -209,11 +208,11 @@ def include_vector_resnet(IMG_SIZE, upsample, disentangle = False, smooth = Fals
         x = upsample_block(x, 256, name_prefix = 'middle_', name_suffix = '5')
 
     if upsample == 'simple':
-        x = VT_simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '1')
-        x = VT_simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '2')
-        x = VT_simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '3')
-        x = VT_simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '4')
-        x = VT_simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '5')
+        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '1')
+        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '2')
+        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '3')
+        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '4')
+        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '5')
 
     # Finaliza para deixar com  a dimensão correta (31, 31, 256)
     x = tf.keras.layers.Conv2D(256, kernel_size = 2, strides = 1, padding = 'valid', name = 'middle_conv2')(x)

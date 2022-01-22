@@ -2,8 +2,7 @@
 
 import os
 import matplotlib.pyplot as plt
-import seaborn as sns
-import numpy as np
+import wandb
 from datetime import datetime
 from datetime import timedelta
 
@@ -62,7 +61,7 @@ def get_time_string(mode = "complete", days_offset = 0):
         st = yr+mt+dy
         return st
     
-def generate_images(generator, img_input, save_destination = None, filename = None):
+def generate_images(generator, img_input, save_destination = None, filename = None, QUIET_PLOT = True):
     img_predict = generator(img_input, training=True)
     f = plt.figure(figsize=(15,15))
     
@@ -75,71 +74,42 @@ def generate_images(generator, img_input, save_destination = None, filename = No
         # getting the pixel values between [0, 1] to plot it.
         plt.imshow(display_list[i] * 0.5 + 0.5)
         plt.axis('off')
-    f.show()
     
     if save_destination != None and filename != None:
         f.savefig(save_destination + filename)
 
-    return f
-
-def plot_losses(loss_df, plot_ma = True, window = 100):
-    
-    # Plota o principal
-    f = plt.figure()
-    sns.lineplot(x = range(loss_df.shape[0]), y = loss_df["Loss G"])
-    sns.lineplot(x = range(loss_df.shape[0]), y = loss_df["Loss D"])
-    
-    # Plota as médias móveis
-    if plot_ma:
-        
-        lossG_ma = loss_df["Loss G"].rolling(window = window, min_periods = 1).mean()
-        lossD_ma = loss_df["Loss D"].rolling(window = window, min_periods = 1).mean()
-        sns.lineplot(x = range(loss_df.shape[0]), y = lossG_ma)
-        sns.lineplot(x = range(loss_df.shape[0]), y = lossD_ma)
-        plt.legend(["Loss G", "Loss D", "Loss G - MA", "Loss D - MA"])
+    if not QUIET_PLOT:
+        f.show()
+        return f
     else:
-        plt.legend(["Loss G", "Loss D"])
-    
-    f.show()
-    
-    return f
+        plt.close(f)
 
-def evaluate_accuracy(generator, discriminator, test_ds, y_real, y_pred, window = 100):
-    
-    # Gera uma imagem-base
-    for img_real in test_ds.take(1):
-        target = img_real
+def generate_fixed_images(fixed_train, fixed_val, generator, epoch, EPOCHS, save_folder, QUIET_PLOT = True, log_wandb = True):
 
-        # A partir dela, gera uma imagem sintética
-        img_fake = generator(img_real, training = True)
+    # Train
+    filename_train = "train_epoch_" + str(epoch).zfill(len(str(EPOCHS))) + ".jpg"
+    fig_train = generate_images(generator, fixed_train, save_folder, filename_train, QUIET_PLOT = False)
 
-        # Avalia ambas
-        disc_real = discriminator([img_real, target], training = True)
-        disc_fake = discriminator([img_fake, target], training = True)
+    # Val
+    filename_val = "val_epoch_" + str(epoch).zfill(len(str(EPOCHS))) + ".jpg"
+    fig_val = generate_images(generator, fixed_val, save_folder, filename_val, QUIET_PLOT = False)
 
-        # Para o caso de ser um discriminador PatchGAN, tira a média
-        disc_real = np.mean(disc_real)
-        disc_fake = np.mean(disc_fake)
+    if log_wandb:
+        wandb_title = "Época {}".format(epoch)
 
-        # Aplica o threshold
-        disc_real = 1 if disc_real > 0.5 else 0
-        disc_fake = 1 if disc_fake > 0.5 else 0
+        wandb_fig_train = wandb.Image(fig_train, caption="Train")
+        wandb_title_train =  wandb_title + " - Train"
 
-        # Acrescenta a observação real como y_real = 1
-        y_real.append(1)
-        y_pred.append(disc_real)
+        wandb_fig_val = wandb.Image(fig_val, caption="Val")
+        wandb_title_val =  wandb_title + " - Val"
 
-        # Acrescenta a observação fake como y_real = 0
-        y_real.append(0)
-        y_pred.append(disc_fake)
-        
-        # Calcula a acurácia pela janela
-        if len(y_real) > window:
-            acc = accuracy(y_real[-window:], y_pred[-window:])    
-        else:
-            acc = accuracy(y_real, y_pred)
+        wandb.log({wandb_title_train: wandb_fig_train,
+                wandb_title_val: wandb_fig_val})
 
-        return y_real, y_pred, acc
+    if QUIET_PLOT:
+        plt.close(fig_train)
+        plt.close(fig_val)
+
 
 #%% FUNÇÕES DO DATASET
 

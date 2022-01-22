@@ -198,10 +198,10 @@ def simple_upsample_block(x, filters, scale = 2, kernel_size = (3, 3), interpola
 
 #%% GERADORES
 
-def pix2pix_generator(IMG_SIZE):
+def pix2pix_generator(IMG_SIZE, OUTPUT_CHANNELS):
 
     # Define os inputs
-    inputs = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, 3])
+    inputs = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS])
 
     # Encoder
     x = inputs
@@ -226,18 +226,18 @@ def pix2pix_generator(IMG_SIZE):
     x = upsample(x, 64, 4)
 
     initializer = tf.random_normal_initializer(0., 0.02)
-    x = tf.keras.layers.Conv2DTranspose(3, 4, strides=2, padding='same', kernel_initializer=initializer, activation='tanh')(x)
+    x = tf.keras.layers.Conv2DTranspose(OUTPUT_CHANNELS, 4, strides=2, padding='same', kernel_initializer=initializer, activation='tanh')(x)
 
     return tf.keras.Model(inputs=inputs, outputs=x)
 
-def unet_generator(IMG_SIZE):
+def unet_generator(IMG_SIZE, OUTPUT_CHANNELS):
 
     '''
     Versão original do gerador U-Net utilizado nos papers Pix2Pix e CycleGAN
     '''
 
     # Inicializa a rede
-    inputs = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, 3])
+    inputs = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS])
     x = inputs
 
     # Downsample (descida)
@@ -267,11 +267,11 @@ def unet_generator(IMG_SIZE):
         x = tf.keras.layers.Concatenate()([x, skip])
 
     # Última camada
-    x = tf.keras.layers.Conv2DTranspose(3, 4, strides=2, padding='same', kernel_initializer=initializer, activation='tanh')(x)
+    x = tf.keras.layers.Conv2DTranspose(OUTPUT_CHANNELS, 4, strides=2, padding='same', kernel_initializer=initializer, activation='tanh')(x)
 
     return tf.keras.Model(inputs=inputs, outputs=x)
 
-def cyclegan_generator(IMG_SIZE, create_latent_vector = False, num_residual_blocks = 9):
+def cyclegan_generator(IMG_SIZE, OUTPUT_CHANNELS, create_latent_vector = False, num_residual_blocks = 9):
     
     '''
     Adaptado do gerador utilizado nos papers Pix2Pix e CycleGAN
@@ -279,7 +279,7 @@ def cyclegan_generator(IMG_SIZE, create_latent_vector = False, num_residual_bloc
     '''
     
     # Inicializa a rede
-    inputs = tf.keras.layers.Input(shape = [IMG_SIZE, IMG_SIZE, 3])
+    inputs = tf.keras.layers.Input(shape = [IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS])
     x = inputs
     
     # Primeiras camadas (pré blocos residuais)
@@ -357,7 +357,7 @@ def cyclegan_generator(IMG_SIZE, create_latent_vector = False, num_residual_bloc
 
         # Camadas finais
         x = tf.keras.layers.ZeroPadding2D([[2, 2],[2, 2]])(x)
-        x = tf.keras.layers.Conv2D(filters = 3, kernel_size = (7, 7) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+        x = tf.keras.layers.Conv2D(filters = OUTPUT_CHANNELS, kernel_size = (7, 7) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
         x = tf.keras.layers.Activation('tanh')(x)
 
     # Cria o modelo
@@ -365,7 +365,7 @@ def cyclegan_generator(IMG_SIZE, create_latent_vector = False, num_residual_bloc
 
 # Modelos customizados
 
-def full_residual_generator(IMG_SIZE, disentanglement = 'none'):
+def full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'none'):
 
     '''
     Adaptado com base no gerador Resnet da Pix2Pix
@@ -374,7 +374,7 @@ def full_residual_generator(IMG_SIZE, disentanglement = 'none'):
     '''
     
     # Inicializa a rede
-    inputs = tf.keras.layers.Input(shape = [IMG_SIZE , IMG_SIZE , 3])
+    inputs = tf.keras.layers.Input(shape = [IMG_SIZE , IMG_SIZE , OUTPUT_CHANNELS])
     x = inputs
     
     # Primeiras camadas (pré blocos residuais)
@@ -485,7 +485,7 @@ def full_residual_generator(IMG_SIZE, disentanglement = 'none'):
 
     # Camadas finais
     # x = tf.keras.layers.ZeroPadding2D([[1, 1],[1, 1]])(x)
-    x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (3, 3) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    x = tf.keras.layers.Conv2DTranspose(filters = OUTPUT_CHANNELS, kernel_size = (3, 3) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
     x = tf.keras.layers.Activation('tanh')(x)
 
     # print(x.shape)
@@ -493,7 +493,7 @@ def full_residual_generator(IMG_SIZE, disentanglement = 'none'):
     # Cria o modelo
     return tf.keras.Model(inputs = inputs, outputs = x)
 
-def simple_decoder_generator(IMG_SIZE, disentanglement = 'none'):
+def simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'none'):
 
     '''
     Adaptado com base no gerador Resnet da Pix2Pix
@@ -502,7 +502,7 @@ def simple_decoder_generator(IMG_SIZE, disentanglement = 'none'):
     '''
     
     # Inicializa a rede
-    inputs = tf.keras.layers.Input(shape = [IMG_SIZE, IMG_SIZE, 3])
+    inputs = tf.keras.layers.Input(shape = [IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS])
     x = inputs
     
     # Primeiras camadas (pré blocos residuais)
@@ -583,7 +583,7 @@ def simple_decoder_generator(IMG_SIZE, disentanglement = 'none'):
 
     # Camadas finais
     # x = tf.keras.layers.ZeroPadding2D([[1, 1],[1, 1]])(x)
-    x = tf.keras.layers.Conv2DTranspose(filters = 3, kernel_size = (3, 3) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
+    x = tf.keras.layers.Conv2DTranspose(filters = OUTPUT_CHANNELS, kernel_size = (3, 3) , strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
     x = tf.keras.layers.Activation('tanh')(x)
 
     # print(x.shape)
@@ -593,7 +593,7 @@ def simple_decoder_generator(IMG_SIZE, disentanglement = 'none'):
 
 #%% DISCRIMINADORES
 
-def patchgan_discriminator(IMG_SIZE, constrained = False):
+def patchgan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, constrained = False):
     
     '''
     Versão original do discriminador utilizado nos papers Pix2Pix e CycleGAN
@@ -605,8 +605,8 @@ def patchgan_discriminator(IMG_SIZE, constrained = False):
         constraint = None
     
     # Inicializa a rede e os inputs
-    inp = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, 3], name='input_image')
-    tar = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, 3], name='target_image')
+    inp = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS], name='input_image')
+    tar = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS], name='target_image')
     # Na implementação em torch, a concatenação ocorre dentro da classe pix2pixmodel
     x = tf.keras.layers.concatenate([inp, tar]) 
     
@@ -633,7 +633,7 @@ def patchgan_discriminator(IMG_SIZE, constrained = False):
 
     return tf.keras.Model(inputs=[inp, tar], outputs=x)
 
-def progan_discriminator(IMG_SIZE, constrained = False, output_type = 'unit'):
+def progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, constrained = False, output_type = 'unit'):
 
     '''
     Adaptado do discriminador utilizado nos papers ProgGAN e styleGAN
@@ -648,8 +648,8 @@ def progan_discriminator(IMG_SIZE, constrained = False, output_type = 'unit'):
         constraint = None
 
     # Inicializa a rede e os inputs
-    inp = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, 3], name='input_image')
-    tar = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, 3], name='target_image')
+    inp = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS], name='input_image')
+    tar = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS], name='target_image')
     x = tf.keras.layers.concatenate([inp, tar])    
 
     # Primeiras três convoluções adaptadas para IMG_SIZE x IMG_SIZE
@@ -739,20 +739,21 @@ def progan_discriminator(IMG_SIZE, constrained = False, output_type = 'unit'):
 if __name__ == "__main__":
 
     # Testa os shapes dos modelos
+    OUTPUT_CHANNELS = 3
     for IMG_SIZE in [256, 128]:
         print(f"\n---- IMG_SIZE = {IMG_SIZE}")
         print("Geradores:")
-        print("Pix2Pix                              ", pix2pix_generator(IMG_SIZE).output.shape)
-        print("U-Net                                ", unet_generator(IMG_SIZE).output.shape)
-        print("CycleGAN generator                   ", cyclegan_generator(IMG_SIZE, create_latent_vector = False).output.shape)
-        print("CycleGAN generator adaptado          ", cyclegan_generator(IMG_SIZE, create_latent_vector = True).output.shape)
-        print("Full Residual                        ", full_residual_generator(IMG_SIZE).output.shape)
-        print("Full Residual Disentangled           ", full_residual_generator(IMG_SIZE, disentanglement = 'normal').output.shape)
-        print("Full Residual Smooth Disentangle     ", full_residual_generator(IMG_SIZE, disentanglement = 'smooth').output.shape)
-        print("Simple Decoder                       ", simple_decoder_generator(IMG_SIZE).output.shape)
-        print("Simple Decoder Disentangled          ", simple_decoder_generator(IMG_SIZE, disentanglement = 'normal').output.shape)
-        print("Simple Decoder Smooth Disentangle    ", simple_decoder_generator(IMG_SIZE, disentanglement = 'smooth').output.shape)
+        print("Pix2Pix                              ", pix2pix_generator(IMG_SIZE, OUTPUT_CHANNELS).output.shape)
+        print("U-Net                                ", unet_generator(IMG_SIZE, OUTPUT_CHANNELS).output.shape)
+        print("CycleGAN generator                   ", cyclegan_generator(IMG_SIZE, OUTPUT_CHANNELS, create_latent_vector = False).output.shape)
+        print("CycleGAN generator adaptado          ", cyclegan_generator(IMG_SIZE, OUTPUT_CHANNELS, create_latent_vector = True).output.shape)
+        print("Full Residual                        ", full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS).output.shape)
+        print("Full Residual Disentangled           ", full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'normal').output.shape)
+        print("Full Residual Smooth Disentangle     ", full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'smooth').output.shape)
+        print("Simple Decoder                       ", simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS).output.shape)
+        print("Simple Decoder Disentangled          ", simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'normal').output.shape)
+        print("Simple Decoder Smooth Disentangle    ", simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'smooth').output.shape)
         print("Discriminadores:")
-        print("PatchGAN                             ", patchgan_discriminator(IMG_SIZE).output.shape)
-        print("ProGAN (output_type = unit)          ", progan_discriminator(IMG_SIZE, output_type='unit').output.shape)
-        print("ProGAN (output_type = patchgan)      ", progan_discriminator(IMG_SIZE, output_type='patchgan').output.shape)
+        print("PatchGAN                             ", patchgan_discriminator(IMG_SIZE, OUTPUT_CHANNELS).output.shape)
+        print("ProGAN (output_type = unit)          ", progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, output_type='unit').output.shape)
+        print("ProGAN (output_type = patchgan)      ", progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, output_type='patchgan').output.shape)
