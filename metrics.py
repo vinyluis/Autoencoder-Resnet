@@ -209,7 +209,7 @@ def evaluate_accuracy(generator, discriminator, test_ds, y_real, y_pred, window 
 
 if __name__  == "__main__":
 
-	root_path = '../../0_Datasets/CelebaHQ/train/male'
+	root_path = '../../0_Datasets/celeba_hq/train/male/'
 
 	# LOAD IMAGES
 	filepath1 = root_path + '000016.jpg'

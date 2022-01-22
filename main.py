@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+
 ## Main code for Autoencoders
 ## Created for the Master's degree dissertation
 ## Vinícius Trevisan 2020-2022
@@ -11,9 +13,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Silencia o TF (https://stackoverflow
 import tensorflow as tf
 
 # Módulos próprios
+import losses, utils, metrics
 import networks as net
-import utils
-import metrics
 import transferlearning as transfer
 
 #%% Weights & Biases
@@ -229,150 +230,6 @@ print("O dataset de teste tem {} imagens".format(config.TEST_SIZE))
 print("O dataset de validação tem {} imagens".format(config.VAL_SIZE))
 print("")
 
-#%% DEFINIÇÃO DAS LOSSES
-
-'''
-L1: Não há treinamento adversário e o Gerador é treinado apenas com a Loss L1
-L2: Idem, com a loss L2
-'''
-def loss_l1_generator(gen_output, target):
-    gan_loss = 0
-    l1_loss = tf.reduce_mean(tf.abs(target - gen_output)) # mean absolute error
-    total_gen_loss = config.LAMBDA * l1_loss
-    return total_gen_loss, gan_loss, l1_loss
-
-def loss_l2_generator(gen_output, target):
-    MSE = tf.keras.losses.MeanSquaredError()
-    gan_loss = 0
-    l2_loss = MSE(target, gen_output) # mean squared error
-    # Usando a loss desse jeito, valores entre 0 e 1 serão subestimados. Deve-se tirar a raiz do MSE
-    l2_loss = tf.sqrt(l2_loss) # RMSE
-    total_gen_loss = config.LAMBDA * l2_loss
-    return total_gen_loss, gan_loss, l2_loss
-
-'''
-PatchGAN: Em vez de o discriminador usar uma única predição (0 = falsa, 1 = real), o discriminador da PatchGAN (Pix2Pix e CycleGAN) usa
-uma matriz 30x30x1, em que cada "pixel" equivale a uma região da imagem, e o discriminador tenta classificar cada região como normal ou falsa
-- A Loss do gerador é a Loss de GAN + LAMBDA* L1_Loss em que a Loss de GAN é a BCE entre a matriz 30x30x1 do gerador e uma matriz de mesma
-  dimensão preenchida com "1"s, e a L1_Loss é a diferença entre a imagem objetivo e a imagem gerada
-- A Loss do discriminador usa apenas a Loss de Gan, mas com uma matriz "0"s para a imagem do gerador (falsa) e uma de "1"s para a imagem real
-'''
-def loss_patchgan_generator(disc_generated_output, gen_output, target):
-    # Lg = GANLoss + LAMBDA * L1_Loss
-    BCE = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-    gan_loss = BCE(tf.ones_like(disc_generated_output), disc_generated_output)
-    l1_loss = tf.reduce_mean(tf.abs(target - gen_output)) # mean absolute error
-    total_gen_loss = gan_loss + (config.LAMBDA * l1_loss)
-    return total_gen_loss, gan_loss, l1_loss
-
-def loss_patchgan_discriminator(disc_real_output, disc_generated_output):
-    # Ld = RealLoss + FakeLoss
-    BCE = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-    real_loss = BCE(tf.ones_like(disc_real_output), disc_real_output)
-    fake_loss = BCE(tf.zeros_like(disc_generated_output), disc_generated_output)
-    total_disc_loss = config.LAMBDA_DISC * (real_loss + fake_loss)
-    return total_disc_loss, real_loss, fake_loss
-
-'''
-Wasserstein GAN (WGAN): A PatchGAN e as GANs clássicas usam a BCE como medida de distância entre a distribuição real e a inferida pelo gerador,
-e esse método é na prática a divergência KL. A WGAN usa a distância de Wasserstein, que é mais estável, então evita o mode collapse.
-- O discriminador tenta maximizar E(D(x_real)) - E(D(x_fake)), pois quanto maior a distância, pior o gerador está sendo
-- O gerador tenta minimizar -E(D(x_fake)), ou seja, o valor esperado (média) da predição do discriminador para a sua imagem
-- Os pesos do discriminador precisam passar por Clipping de -0.01 a 0.01 para garantir a continuidade de Lipschitz
-Como a WGAN é não-supervisionada, eu vou acrescentar no gerador também a L1 Loss da PatchGAN para comparar com o target,
-e usar a WGAN como substituta da GAN Loss
-
-'''
-def loss_wgan_generator(disc_generated_output, gen_output, target):
-    # O output do discriminador é de tamanho BATCH_SIZE x 1, o valor esperado é a média
-    gan_loss = -tf.reduce_mean(disc_generated_output)
-    l1_loss = tf.reduce_mean(tf.abs(target - gen_output))
-    total_gen_loss = gan_loss + (config.LAMBDA * l1_loss)
-    return total_gen_loss, gan_loss, l1_loss
-
-def loss_wgan_discriminator(disc_real_output, disc_generated_output):
-    # Maximizar E(D(x_real)) - E(D(x_fake)) é equivalente a minimizar -(E(D(x_real)) - E(D(x_fake))) ou E(D(x_fake)) -E(D(x_real))
-    fake_loss = tf.reduce_mean(disc_generated_output)
-    real_loss = tf.reduce_mean(disc_real_output)
-    total_disc_loss = -(real_loss - fake_loss)
-    return total_disc_loss, real_loss, fake_loss
-
-'''
-Wasserstein GAN - Gradient Penalty (WGAN-GP): A WGAN tem uma forma muito bruta de assegurar a continuidade de Lipschitz, então
-os autores criaram o conceito de Gradient Penalty para manter essa condição de uma forma mais suave.
-- O gerador tem a MESMA loss da WGAN
-- O discriminador, em vez de ter seus pesos limitados pelo clipping, ganha uma penalidade de gradiente que deve ser calculada
-'''
-def loss_wgangp_generator(disc_generated_output, gen_output, target):
-    return loss_wgan_generator(disc_generated_output, gen_output, target)
-
-def loss_wgangp_discriminator(disc, disc_real_output, disc_generated_output, real_img, generated_img, target):
-    fake_loss = tf.reduce_mean(disc_generated_output)
-    real_loss = tf.reduce_mean(disc_real_output)
-    gp = gradient_penalty_conditional(disc, real_img, generated_img, target)
-    total_disc_loss = total_disc_loss = -(real_loss - fake_loss) + config.LAMBDA_GP * gp + (0.001 * tf.reduce_mean(disc_real_output**2))
-    return total_disc_loss, real_loss, fake_loss
-
-def gradient_penalty(discriminator, real_img, fake_img, training):
-    ''' 
-    Calculates the gradient penalty.
-    This loss is calculated on an interpolated image and added to the discriminator loss.
-    From: https://colab.research.google.com/github/keras-team/keras-io/blob/master/examples/generative/ipynb/wgan_gp.ipynb#scrollTo=LhzOUkhYSOPG
-    '''
-    # Get the Batch Size
-    batch_size = real_img.shape[0]
-
-    # Calcula gamma
-    gamma = tf.random.uniform([batch_size, 1, 1, 1])
-
-    # Calcula a imagem interpolada
-    interpolated = real_img * gamma + fake_img * (1 - gamma)
-
-    with tf.GradientTape() as gp_tape:
-        gp_tape.watch(interpolated)
-
-        # 1. Get the discriminator output for this interpolated image.
-        if training == 'direct':
-            pred = discriminator(interpolated, training=True) # O discriminador usa duas imagens como entrada
-        elif training == 'progressive':
-            pred = discriminator(interpolated)
-
-    # 2. Calculate the gradients w.r.t to this interpolated image.
-    grads = gp_tape.gradient(pred, [interpolated])[0]
-    # 3. Calculate the norm of the gradients.
-    norm = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=[1, 2, 3]))
-    gp = tf.reduce_mean((norm - 1.0) ** 2)
-    return gp
-
-def gradient_penalty_conditional(disc, real_img, generated_img, target):
-    ''' 
-    Adapted to Conditional Discriminators
-    Calculates the gradient penalty.
-    This loss is calculated on an interpolated image and added to the discriminator loss.
-    From: https://colab.research.google.com/github/keras-team/keras-io/blob/master/examples/generative/ipynb/wgan_gp.ipynb#scrollTo=LhzOUkhYSOPG
-    '''
-    # Get the Batch Size
-    batch_size = real_img.shape[0]
-
-    # Calcula gamma
-    gamma = tf.random.uniform([batch_size, 1, 1, 1])
-
-    # Calcula a imagem interpolada
-    interpolated = real_img * gamma + generated_img * (1 - gamma)
-    
-    with tf.GradientTape() as gp_tape:
-        gp_tape.watch(interpolated)
-        
-        # 1. Get the discriminator output for this interpolated image.
-        pred = disc([interpolated, target], training=True) # O discriminador usa duas imagens como entrada
-
-    # 2. Calculate the gradients w.r.t to this interpolated image.
-    grads = gp_tape.gradient(pred, [interpolated])[0]
-    # 3. Calculate the norm of the gradients.
-    norm = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=[1, 2, 3]))
-    gp = tf.reduce_mean((norm - 1.0) ** 2)
-    return gp
-
 
 #%% MÉTRICAS DE QUALIDADE
 
@@ -411,16 +268,16 @@ def train_step(generator, discriminator, input_image, target):
         disc_gen = discriminator([gen_image, target], training=True)
 
         if config.loss_type == 'patchganloss':
-            gen_loss, gen_gan_loss, gen_l1_loss = loss_patchgan_generator(disc_gen, gen_image, target)
-            disc_loss, disc_real_loss, disc_fake_loss = loss_patchgan_discriminator(disc_real, disc_gen)
+            gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_patchgan_generator(disc_gen, gen_image, target, config.LAMBDA)
+            disc_loss, disc_real_loss, disc_fake_loss = losses.loss_patchgan_discriminator(disc_real, disc_gen, config.LAMBDA_DISC)
     
         elif config.loss_type == 'wgan':
-            gen_loss, gen_gan_loss, gen_l1_loss = loss_wgan_generator(disc_gen, gen_image, target)
-            disc_loss, disc_real_loss, disc_fake_loss = loss_wgan_discriminator(disc_real, disc_gen)
+            gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_wgan_generator(disc_gen, gen_image, target, config.LAMBDA)
+            disc_loss, disc_real_loss, disc_fake_loss = losses.loss_wgan_discriminator(disc_real, disc_gen)
 
         elif config.loss_type == 'wgan-gp':
-            gen_loss, gen_gan_loss, gen_l1_loss = loss_wgangp_generator(disc_gen, gen_image, target)
-            disc_loss, disc_real_loss, disc_fake_loss = loss_wgangp_discriminator(discriminator, disc_real, disc_gen, input_image, gen_image, target)
+            gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_wgangp_generator(disc_gen, gen_image, target)
+            disc_loss, disc_real_loss, disc_fake_loss = losses.loss_wgangp_discriminator(discriminator, disc_real, disc_gen, input_image, gen_image, target, config.LAMBDA_GP)
 
         # Incluído o else para não dar erro 'gen_loss' is used before assignment
         else:
@@ -435,7 +292,7 @@ def train_step(generator, discriminator, input_image, target):
     discriminator_optimizer.apply_gradients(zip(discriminator_gradients, disc.trainable_variables))
     
     # Cria um dicionário das losses
-    losses = {
+    loss_dict = {
         'gen_total_loss' : gen_loss,
         'gen_gan_loss' : gen_gan_loss,
         'gen_l1_loss' : gen_l1_loss,
@@ -444,7 +301,7 @@ def train_step(generator, discriminator, input_image, target):
         'disc_fake_loss' : disc_fake_loss,
     }
 
-    return losses
+    return loss_dict
 
 @tf.function
 def train_step_not_adversarial(generator, input_image, target):
@@ -453,10 +310,10 @@ def train_step_not_adversarial(generator, input_image, target):
         gen_image = generator(input_image, training = True)
 
         if config.loss_type == 'l1':
-            gen_loss, gen_gan_loss, gen_l1_loss = loss_l1_generator(gen_image, target)
+            gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_l1_generator(gen_image, target, config.LAMBDA)
 
         elif config.loss_type == 'l2':
-            gen_loss, gen_gan_loss, gen_l1_loss = loss_l2_generator(gen_image, target)
+            gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_l2_generator(gen_image, target, config.LAMBDA)
             
         # Incluído o else para não dar erro 'gen_loss' is used before assignment
         else:
@@ -467,12 +324,12 @@ def train_step_not_adversarial(generator, input_image, target):
     generator_optimizer.apply_gradients(zip(generator_gradients, generator.trainable_variables))
 
     # Cria um dicionário das losses
-    losses = {
+    loss_dict = {
         'gen_total_loss' : gen_loss,
         'gen_l1_loss' : gen_l1_loss
     }
     
-    return losses
+    return loss_dict
 
 def evaluate_validation_losses(generator, discriminator, input_image, target):
         
@@ -482,16 +339,16 @@ def evaluate_validation_losses(generator, discriminator, input_image, target):
     disc_gen = discriminator([gen_image, target], training=True)
     
     if config.loss_type == 'patchganloss':
-        gen_loss, gen_gan_loss, gen_l1_loss = loss_patchgan_generator(disc_gen, gen_image, target)
-        disc_loss, disc_real_loss, disc_fake_loss = loss_patchgan_discriminator(disc_real, disc_gen)
+        gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_patchgan_generator(disc_gen, gen_image, target, config.LAMBDA)
+        disc_loss, disc_real_loss, disc_fake_loss = losses.loss_patchgan_discriminator(disc_real, disc_gen, config.LAMBDA_DISC)
 
     elif config.loss_type == 'wgan':
-        gen_loss, gen_gan_loss, gen_l1_loss = loss_wgan_generator(disc_gen, gen_image, target)
-        disc_loss, disc_real_loss, disc_fake_loss = loss_wgan_discriminator(disc_real, disc_gen)
+        gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_wgan_generator(disc_gen, gen_image, target, config.LAMBDA)
+        disc_loss, disc_real_loss, disc_fake_loss = losses.loss_wgan_discriminator(disc_real, disc_gen)
 
     elif config.loss_type == 'wgan-gp':
-        gen_loss, gen_gan_loss, gen_l1_loss = loss_wgangp_generator(disc_gen, gen_image, target)
-        disc_loss, disc_real_loss, disc_fake_loss = loss_wgangp_discriminator(discriminator, disc_real, disc_gen, input_image, gen_image, target)
+        gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_wgangp_generator(disc_gen, gen_image, target)
+        disc_loss, disc_real_loss, disc_fake_loss = losses.loss_wgangp_discriminator(discriminator, disc_real, disc_gen, input_image, gen_image, target, config.LAMBDA_GP)
 
     # Incluído o else para não dar erro 'gen_loss' is used before assignment
     else:
@@ -500,7 +357,7 @@ def evaluate_validation_losses(generator, discriminator, input_image, target):
         print("Erro de modelo. Selecione uma Loss válida")
 
     # Cria um dicionário das losses
-    losses = {
+    loss_dict = {
         'gen_total_loss' : gen_loss,
         'gen_gan_loss' : gen_gan_loss,
         'gen_l1_loss' : gen_l1_loss,
@@ -509,17 +366,17 @@ def evaluate_validation_losses(generator, discriminator, input_image, target):
         'disc_fake_loss' : disc_fake_loss,
     }
     
-    return losses
+    return loss_dict
 
 def evaluate_validation_losses_not_adversarial(generator, input_image, target):
         
     gen_image = generator(input_image, training = True)
 
     if config.loss_type == 'l1':
-        gen_loss, gen_gan_loss, gen_l1_loss = loss_l1_generator(gen_image, target)
+        gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_l1_generator(gen_image, target, config.LAMBDA)
 
     elif config.loss_type == 'l2':
-        gen_loss, gen_gan_loss, gen_l1_loss = loss_l2_generator(gen_image, target)
+        gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_l2_generator(gen_image, target, config.LAMBDA)
         
     # Incluído o else para não dar erro 'gen_loss' is used before assignment
     else:
@@ -527,12 +384,12 @@ def evaluate_validation_losses_not_adversarial(generator, input_image, target):
         print("Erro de modelo. Selecione uma Loss válida")
 
     # Cria um dicionário das losses
-    losses = {
+    loss_dict = {
         'gen_total_loss' : gen_loss,
         'gen_l1_loss' : gen_l1_loss
     }
     
-    return losses
+    return loss_dict
 
 def fit(generator, discriminator, train_ds, val_ds, first_epoch, epochs, adversarial = True):
     
@@ -609,11 +466,6 @@ def fit(generator, discriminator, train_ds, val_ds, first_epoch, epochs, adversa
         # Gera as imagens após o treinamento desta época
         utils.generate_fixed_images(fixed_train, fixed_val, generator, epoch, epochs, result_folder, QUIET_PLOT)
 
-        # Loga o tempo de duração da época no wandb
-        dt = time.time() - t_start
-        print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
-        wandb.log({'epoch time (s)': dt, 'epoch time (min)': dt/60})
-
         ### AVALIAÇÃO DAS MÉTRICAS DE QUALIDADE ###
         if (config.EVALUATE_EVERY_EPOCH == True or
             config.EVALUATE_EVERY_EPOCH == False and epoch == epochs):
@@ -632,6 +484,10 @@ def fit(generator, discriminator, train_ds, val_ds, first_epoch, epochs, adversa
             val_metrics = {k+"_val": v for k, v in metric_results.items()} # Renomeia o dicionário para incluir "val" no final das keys
             wandb.log(val_metrics)
 
+        # Loga o tempo de duração da época no wandb
+        dt = time.time() - t_start
+        print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
+        wandb.log({'epoch time (s)': dt, 'epoch time (min)': dt/60})
         
 #%% PREPARAÇÃO DOS MODELOS
 
