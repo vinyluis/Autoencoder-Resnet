@@ -9,11 +9,15 @@ from datetime import timedelta
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
 import tensorflow as tf
 
-from sklearn.metrics import accuracy_score as accuracy
-
 #%% FUNÇÕES DE APOIO
 
 def dict_tensor_to_numpy(tensor_dict):
+    """Transforma tensores guardados em um dicionário em variáveis numéricas.
+
+    Essa função é usada no resultado das losses, que vem no formato de tensor,
+    para transforma-las em variáveis numéricas antes de enviar para o Weights
+    and Biases.
+    """
     numpy_dict = {}
     for k in tensor_dict.keys():
         try:
@@ -23,7 +27,7 @@ def dict_tensor_to_numpy(tensor_dict):
     return numpy_dict
 
 def get_time_string(mode = "complete", days_offset = 0):
-    # Prepara a string de data e hora conforme necessário
+    """Prepara a string de data e hora conforme necessário."""
 
     #horário atual
     now = datetime.now()
@@ -62,6 +66,7 @@ def get_time_string(mode = "complete", days_offset = 0):
         return st
     
 def generate_images(generator, img_input, save_destination = None, filename = None, QUIET_PLOT = True):
+    """Usa o gerador para gerar uma imagem sintética a partir de uma imagem de input"""
     img_predict = generator(img_input, training=True)
     f = plt.figure(figsize=(15,15))
     
@@ -85,6 +90,12 @@ def generate_images(generator, img_input, save_destination = None, filename = No
         plt.close(f)
 
 def generate_fixed_images(fixed_train, fixed_val, generator, epoch, EPOCHS, save_folder, QUIET_PLOT = True, log_wandb = True):
+    """Gera a versão sintética das imagens fixas, para acompanhamento.
+    
+    Recebe imagens fixas de treinamento e de validação, o gerador, a época atual e o total de épocas.
+    Em seguida passa essas imagens pelo gerador para obter a versão sintética delas.
+    Finalmente salva as imagens em disco na pasta save_folder e registra as imagens na plataforma Weights and Biases.
+    """
 
     # Train
     filename_train = "train_epoch_" + str(epoch).zfill(len(str(EPOCHS))) + ".jpg"
@@ -114,25 +125,29 @@ def generate_fixed_images(fixed_train, fixed_val, generator, epoch, EPOCHS, save
 #%% FUNÇÕES DO DATASET
 
 def load(image_file):
+    """Função de leitura das imagens."""
     image = tf.io.read_file(image_file)
     image = tf.image.decode_jpeg(image)
     image = tf.cast(image, tf.float32)
     return image
 
 def normalize(input_image):
-    # normalizing the images to [-1, 1]
+    """Normaliza as imagens para o intervalo [-1, 1]"""
     input_image = (input_image / 127.5) - 1
     return input_image
 
 def resize(input_image, height, width):
+    """Redimensiona as imagens para width x height"""
     input_image = tf.image.resize(input_image, [height, width], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
     return input_image
 
 def random_crop(input_image, img_size, num_channels):
+    """Realiza um corte quadrado aleatório em uma imagem"""
     cropped_image = tf.image.random_crop(value = input_image, size = [img_size, img_size, num_channels])
     return cropped_image
 
 def random_jitter(input_image, img_size, num_channels):
+    """Realiza cortes quadrados aleatórios e inverte aleatoriamente uma imagem"""
     # resizing to 286 x 286 x 3
     new_size = int(img_size * 1.117)
     input_image = resize(input_image, new_size, new_size)
@@ -145,13 +160,18 @@ def random_jitter(input_image, img_size, num_channels):
     
     return input_image
 
-def load_image_train(image_file, img_size, num_channels):
-    input_image = load(image_file)    
-    input_image = random_jitter(input_image, img_size, num_channels)
+def load_image_train(image_file, img_size, num_channels, use_jitter):
+    """Carrega uma imagem do dataset de treinamento."""
+    input_image = load(image_file)
+    if use_jitter:
+        input_image = random_jitter(input_image, img_size, num_channels)
+    else:
+        input_image = resize(input_image, img_size, img_size)
     input_image = normalize(input_image)
     return input_image
 
 def load_image_test(image_file, img_size):
+    """Carrega uma imagem do dataset de teste / validação."""
     input_image = load(image_file)    
     input_image = resize(input_image, img_size, img_size)
     input_image = normalize(input_image)

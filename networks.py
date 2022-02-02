@@ -1,3 +1,4 @@
+from lib2to3.pytree import Base
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -7,14 +8,23 @@ import tensorflow_addons as tfa
 from tensorflow.keras.constraints import Constraint
 from tensorflow.keras import backend
 
-## Tipo de normalização
-# norm_layer = tf.keras.layers.BatchNormalization
-norm_layer = tfa.layers.InstanceNormalization
-
 ## Modo de inicialização dos pesos
 initializer = tf.random_normal_initializer(0., 0.02)
 
 #%% CLASSES AUXILIARES
+
+class PixelNormalization(tf.keras.layers.Layer):
+
+    """Pixel Normalization (usada na ProGAN)."""
+
+    def __init__(self):
+        super(PixelNormalization, self).__init__()
+        self.epsilon = 1e-8
+
+    def call(self, inputs):
+        x = inputs
+        # axis = -1 -> A normalização atua nos canais
+        return x / tf.sqrt(tf.reduce_mean(x**2, axis = -1, keepdims = True) + self.epsilon)
 
 class ClipConstraint(Constraint):
 # clip model weights to a given hypercube
@@ -36,7 +46,18 @@ class ClipConstraint(Constraint):
 
 ## Básicos
 
-def upsample(x, filters, kernel_size = (3, 3), apply_dropout = False):
+def upsample(x, filters, kernel_size = (3, 3), apply_dropout = False, norm_type = 'instancenorm'):
+
+    # Define o tipo de normalização usada
+    if norm_type == 'batchnorm':
+        norm_layer = tf.keras.layers.BatchNormalization
+    elif norm_type == 'instancenorm':
+        norm_layer = tfa.layers.InstanceNormalization
+    elif norm_type == 'pixelnorm':
+        norm_layer = PixelNormalization
+    else:
+        raise BaseException("Tipo de normalização desconhecida")
+
     # Reconstrução da imagem, baseada na Pix2Pix / CycleGAN
     x = tf.keras.layers.Conv2DTranspose(filters = filters, kernel_size = kernel_size, strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
     x = norm_layer()(x)
@@ -45,7 +66,18 @@ def upsample(x, filters, kernel_size = (3, 3), apply_dropout = False):
     x = tf.keras.layers.ReLU()(x)
     return x
 
-def downsample(x, filters, kernel_size = (3, 3), apply_norm = True):
+def downsample(x, filters, kernel_size = (3, 3), apply_norm = True, norm_type = 'instancenorm'):
+
+    # Define o tipo de normalização usada
+    if norm_type == 'batchnorm':
+        norm_layer = tf.keras.layers.BatchNormalization
+    elif norm_type == 'instancenorm':
+        norm_layer = tfa.layers.InstanceNormalization
+    elif norm_type == 'pixelnorm':
+        norm_layer = PixelNormalization
+    else:
+        raise BaseException("Tipo de normalização desconhecida")
+
     # Reconstrução da imagem, baseada na Pix2Pix / CycleGAN    
     x = tf.keras.layers.Conv2D(filters = filters, kernel_size = kernel_size, strides = (2, 2), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
     if apply_norm:
@@ -55,12 +87,22 @@ def downsample(x, filters, kernel_size = (3, 3), apply_norm = True):
 
 ## Residuais
 
-def residual_block(input_tensor, filters):
+def residual_block(input_tensor, filters, norm_type = 'instancenorm'):
     
     ''' 
     Cria um bloco resnet baseado na Resnet34
     https://openaccess.thecvf.com/content_cvpr_2016/papers/He_Deep_Residual_Learning_CVPR_2016_paper.pdf
     '''
+
+    # Define o tipo de normalização usada
+    if norm_type == 'batchnorm':
+        norm_layer = tf.keras.layers.BatchNormalization
+    elif norm_type == 'instancenorm':
+        norm_layer = tfa.layers.InstanceNormalization
+    elif norm_type == 'pixelnorm':
+        norm_layer = PixelNormalization
+    else:
+        raise BaseException("Tipo de normalização desconhecida")
     
     x = input_tensor
     skip = input_tensor
@@ -80,13 +122,23 @@ def residual_block(input_tensor, filters):
     
     return x
 
-def residual_block_transpose(input_tensor, filters):
+def residual_block_transpose(input_tensor, filters, norm_type = 'instancenorm'):
     
     ''' 
     Cria um bloco resnet baseado na Resnet34, mas invertido (convoluções transpostas)
     https://openaccess.thecvf.com/content_cvpr_2016/papers/He_Deep_Residual_Learning_CVPR_2016_paper.pdf
     '''
-    
+
+    # Define o tipo de normalização usada
+    if norm_type == 'batchnorm':
+        norm_layer = tf.keras.layers.BatchNormalization
+    elif norm_type == 'instancenorm':
+        norm_layer = tfa.layers.InstanceNormalization
+    elif norm_type == 'pixelnorm':
+        norm_layer = PixelNormalization
+    else:
+        raise BaseException("Tipo de normalização desconhecida")
+
     x = input_tensor
     skip = input_tensor
     
@@ -105,12 +157,22 @@ def residual_block_transpose(input_tensor, filters):
     
     return x
 
-def residual_bottleneck_block(input_tensor, filters):
+def residual_bottleneck_block(input_tensor, filters, norm_type = 'instancenorm'):
     
     ''' 
     Cria um bloco resnet bottleneck, baseado na Resnet50
     https://openaccess.thecvf.com/content_cvpr_2016/papers/He_Deep_Residual_Learning_CVPR_2016_paper.pdf
     '''
+
+    # Define o tipo de normalização usada
+    if norm_type == 'batchnorm':
+        norm_layer = tf.keras.layers.BatchNormalization
+    elif norm_type == 'instancenorm':
+        norm_layer = tfa.layers.InstanceNormalization
+    elif norm_type == 'pixelnorm':
+        norm_layer = PixelNormalization
+    else:
+        raise BaseException("Tipo de normalização desconhecida")
     
     x = input_tensor
     skip = input_tensor
@@ -135,13 +197,23 @@ def residual_bottleneck_block(input_tensor, filters):
     
     return x
 
-def residual_downsample_bottleneck_block(input_tensor, filters):
+def residual_downsample_bottleneck_block(input_tensor, filters, norm_type = 'instancenorm'):
     
     ''' 
     Cria um bloco resnet bottleneck, com redução de dimensão, baseado na Resnet50
     https://openaccess.thecvf.com/content_cvpr_2016/papers/He_Deep_Residual_Learning_CVPR_2016_paper.pdf
     '''
     
+    # Define o tipo de normalização usada
+    if norm_type == 'batchnorm':
+        norm_layer = tf.keras.layers.BatchNormalization
+    elif norm_type == 'instancenorm':
+        norm_layer = tfa.layers.InstanceNormalization
+    elif norm_type == 'pixelnorm':
+        norm_layer = PixelNormalization
+    else:
+        raise BaseException("Tipo de normalização desconhecida")
+
     x = input_tensor
     skip = input_tensor
     
@@ -181,8 +253,18 @@ def simple_downsample(x, scale = 2):
     x = tf.keras.layers.AveragePooling2D(pool_size = (scale, scale))(x)
     return x
 
-def simple_upsample_block(x, filters, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear'):
+def simple_upsample_block(x, filters, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear', norm_type = 'instancenorm'):
     
+    # Define o tipo de normalização usada
+    if norm_type == 'batchnorm':
+        norm_layer = tf.keras.layers.BatchNormalization
+    elif norm_type == 'instancenorm':
+        norm_layer = tfa.layers.InstanceNormalization
+    elif norm_type == 'pixelnorm':
+        norm_layer = PixelNormalization
+    else:
+        raise BaseException("Tipo de normalização desconhecida")
+
     x = simple_upsample(x, scale = scale, interpolation = interpolation) 
     
     x = tf.keras.layers.Conv2DTranspose(filters = filters, kernel_size = kernel_size, strides = (1, 1), padding = "same", kernel_initializer=initializer, use_bias = True)(x)
@@ -195,42 +277,41 @@ def simple_upsample_block(x, filters, scale = 2, kernel_size = (3, 3), interpola
     
     return x
 
-
 #%% GERADORES
 
-def pix2pix_generator(IMG_SIZE, OUTPUT_CHANNELS):
+def pix2pix_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE):
 
     # Define os inputs
     inputs = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS])
 
     # Encoder
     x = inputs
-    x = downsample(x, 64, 4, apply_norm = False)
-    x = downsample(x, 128, 4)
-    x = downsample(x, 256, 4)
-    x = downsample(x, 512, 4)
-    x = downsample(x, 512, 4)
-    x = downsample(x, 512, 4)
-    x = downsample(x, 512, 4)
+    x = downsample(x, 64, 4, apply_norm = False, norm_type = NORM_TYPE)
+    x = downsample(x, 128, 4, norm_type = NORM_TYPE)
+    x = downsample(x, 256, 4, norm_type = NORM_TYPE)
+    x = downsample(x, 512, 4, norm_type = NORM_TYPE)
+    x = downsample(x, 512, 4, norm_type = NORM_TYPE)
+    x = downsample(x, 512, 4, norm_type = NORM_TYPE)
+    x = downsample(x, 512, 4, norm_type = NORM_TYPE)
     if IMG_SIZE == 256:
-        x = downsample(x, 512, 4)
+        x = downsample(x, 512, 4, norm_type = NORM_TYPE)
 
     # Decoder
-    x = upsample(x, 512, 4, apply_dropout=True)
-    x = upsample(x, 512, 4, apply_dropout=True)
-    x = upsample(x, 512, 4, apply_dropout=True)
+    x = upsample(x, 512, 4, apply_dropout=True, norm_type = NORM_TYPE)
+    x = upsample(x, 512, 4, apply_dropout=True, norm_type = NORM_TYPE)
+    x = upsample(x, 512, 4, apply_dropout=True, norm_type = NORM_TYPE)
     if IMG_SIZE == 256:
-        x = upsample(x, 512, 4)
-    x = upsample(x, 256, 4)
-    x = upsample(x, 128, 4)
-    x = upsample(x, 64, 4)
+        x = upsample(x, 512, 4, norm_type = NORM_TYPE)
+    x = upsample(x, 256, 4, norm_type = NORM_TYPE)
+    x = upsample(x, 128, 4, norm_type = NORM_TYPE)
+    x = upsample(x, 64, 4, norm_type = NORM_TYPE)
 
     initializer = tf.random_normal_initializer(0., 0.02)
     x = tf.keras.layers.Conv2DTranspose(OUTPUT_CHANNELS, 4, strides=2, padding='same', kernel_initializer=initializer, activation='tanh')(x)
 
     return tf.keras.Model(inputs=inputs, outputs=x)
 
-def unet_generator(IMG_SIZE, OUTPUT_CHANNELS):
+def unet_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE):
 
     '''
     Versão original do gerador U-Net utilizado nos papers Pix2Pix e CycleGAN
@@ -250,7 +331,7 @@ def unet_generator(IMG_SIZE, OUTPUT_CHANNELS):
         norm_down = [False, True, True, True, True, True, True]
     skips = []
     for filter, norm  in zip(filters_down, norm_down):
-        x = downsample(x, filter, kernel_size = (4, 4), apply_norm = norm)
+        x = downsample(x, filter, kernel_size = (4, 4), apply_norm = norm, norm_type = NORM_TYPE)
         skips.append(x)
 
     # Upsample (subida)
@@ -263,7 +344,7 @@ def unet_generator(IMG_SIZE, OUTPUT_CHANNELS):
         dropout_up = [True, True, True, False, False, False]
     skips = skips[-2::-1] # Inverte as skip connections, e retira a última
     for filter, dropout, skip in zip(filters_up, dropout_up, skips):
-        x = upsample(x, filter, kernel_size = (4,4), apply_dropout = dropout)
+        x = upsample(x, filter, kernel_size = (4,4), apply_dropout = dropout, norm_type = NORM_TYPE)
         x = tf.keras.layers.Concatenate()([x, skip])
 
     # Última camada
@@ -271,13 +352,23 @@ def unet_generator(IMG_SIZE, OUTPUT_CHANNELS):
 
     return tf.keras.Model(inputs=inputs, outputs=x)
 
-def cyclegan_generator(IMG_SIZE, OUTPUT_CHANNELS, create_latent_vector = False, num_residual_blocks = 9):
+def residual_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE, create_latent_vector = False, num_residual_blocks = 6):
     
     '''
     Adaptado do gerador utilizado nos papers Pix2Pix e CycleGAN
     Modificado de forma a gerar um vetor latente entre o encoder e o decoder
     '''
     
+    # Define o tipo de normalização usada
+    if NORM_TYPE == 'batchnorm':
+        norm_layer = tf.keras.layers.BatchNormalization
+    elif NORM_TYPE == 'instancenorm':
+        norm_layer = tfa.layers.InstanceNormalization
+    elif NORM_TYPE == 'pixelnorm':
+        norm_layer = PixelNormalization
+    else:
+        raise BaseException("Tipo de normalização desconhecida")
+
     # Inicializa a rede
     inputs = tf.keras.layers.Input(shape = [IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS])
     x = inputs
@@ -300,7 +391,7 @@ def cyclegan_generator(IMG_SIZE, OUTPUT_CHANNELS, create_latent_vector = False, 
     
     # Blocos Residuais
     for i in range(num_residual_blocks):
-        x = residual_block(x, 256)
+        x = residual_block(x, 256, norm_type = NORM_TYPE)
     
     # Criação do vetor latente
     if create_latent_vector:
@@ -365,7 +456,7 @@ def cyclegan_generator(IMG_SIZE, OUTPUT_CHANNELS, create_latent_vector = False, 
 
 # Modelos customizados
 
-def full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'none'):
+def full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE, disentanglement = 'none', num_residual_blocks = 6):
 
     '''
     Adaptado com base no gerador Resnet da Pix2Pix
@@ -373,6 +464,16 @@ def full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'none')
     Após o vetor latente, usar 8 camadas Dense para "desembaraçar" o espaço latente, como feito na StyleGAN
     '''
     
+    # Define o tipo de normalização usada
+    if NORM_TYPE == 'batchnorm':
+        norm_layer = tf.keras.layers.BatchNormalization
+    elif NORM_TYPE == 'instancenorm':
+        norm_layer = tfa.layers.InstanceNormalization
+    elif NORM_TYPE == 'pixelnorm':
+        norm_layer = PixelNormalization
+    else:
+        raise BaseException("Tipo de normalização desconhecida")
+
     # Inicializa a rede
     inputs = tf.keras.layers.Input(shape = [IMG_SIZE , IMG_SIZE , OUTPUT_CHANNELS])
     x = inputs
@@ -394,8 +495,8 @@ def full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'none')
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
     
     # Blocos Residuais
-    for i in range(9):
-        x = residual_block(x, 256)
+    for i in range(num_residual_blocks):
+        x = residual_block(x, 256, norm_type = NORM_TYPE)
     
     # Criação do vetor latente 
     vecsize = 512
@@ -467,8 +568,8 @@ def full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'none')
     x = tf.keras.layers.ReLU()(x)
     
     # Blocos Residuais
-    for i in range(9):
-        x = residual_block_transpose(x, 256)
+    for i in range(num_residual_blocks):
+        x = residual_block_transpose(x, 256, norm_type = NORM_TYPE)
     
     # Reconstrução pós blocos residuais
     
@@ -493,7 +594,7 @@ def full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'none')
     # Cria o modelo
     return tf.keras.Model(inputs = inputs, outputs = x)
 
-def simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'none'):
+def simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE, disentanglement = 'none', num_residual_blocks = 6):
 
     '''
     Adaptado com base no gerador Resnet da Pix2Pix
@@ -501,6 +602,16 @@ def simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'none'
     Após o vetor latente, usar 8 camadas Dense para "desembaraçar" o espaço latente, como feito na StyleGAN
     '''
     
+    # Define o tipo de normalização usada
+    if NORM_TYPE == 'batchnorm':
+        norm_layer = tf.keras.layers.BatchNormalization
+    elif NORM_TYPE == 'instancenorm':
+        norm_layer = tfa.layers.InstanceNormalization
+    elif NORM_TYPE == 'pixelnorm':
+        norm_layer = PixelNormalization
+    else:
+        raise BaseException("Tipo de normalização desconhecida")
+
     # Inicializa a rede
     inputs = tf.keras.layers.Input(shape = [IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS])
     x = inputs
@@ -522,8 +633,8 @@ def simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'none'
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
     
     # Blocos Residuais
-    for i in range(9):
-        x = residual_block(x, 256)
+    for i in range(num_residual_blocks):
+        x = residual_block(x, 256, norm_type = NORM_TYPE)
     
     # Criação do vetor latente 
     vecsize = 512
@@ -572,14 +683,14 @@ def simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'none'
     # Upsamples
     # Todos os upsamples vão ser feitos com o simple_upsample, seguidos de duas convoluções na mesma dimensão
     if IMG_SIZE == 256:
-        x = simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 2, 2, 512
-    x = simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 4, 4, 512 ou 2, 2, 512
-    x = simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 8, 8, 512 ou 4, 4, 512
-    x = simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 16, 16, 512 ou 8, 8, 512
-    x = simple_upsample_block(x, 256, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 32, 32, 256 ou 16, 16, 256
-    x = simple_upsample_block(x, 128, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 64, 64, 128 ou 32, 32, 128
-    x = simple_upsample_block(x, 64, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 128, 128, 64 ou 64, 64, 64
-    x = simple_upsample_block(x, 32, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear') #--- 256, 256, 32 ou 128, 128, 32
+        x = simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear', norm_type = NORM_TYPE) #--- 2, 2, 512
+    x = simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear', norm_type = NORM_TYPE) #--- 4, 4, 512 ou 2, 2, 512
+    x = simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear', norm_type = NORM_TYPE) #--- 8, 8, 512 ou 4, 4, 512
+    x = simple_upsample_block(x, 512, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear', norm_type = NORM_TYPE) #--- 16, 16, 512 ou 8, 8, 512
+    x = simple_upsample_block(x, 256, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear', norm_type = NORM_TYPE) #--- 32, 32, 256 ou 16, 16, 256
+    x = simple_upsample_block(x, 128, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear', norm_type = NORM_TYPE) #--- 64, 64, 128 ou 32, 32, 128
+    x = simple_upsample_block(x, 64, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear', norm_type = NORM_TYPE) #--- 128, 128, 64 ou 64, 64, 64
+    x = simple_upsample_block(x, 32, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear', norm_type = NORM_TYPE) #--- 256, 256, 32 ou 128, 128, 32
 
     # Camadas finais
     # x = tf.keras.layers.ZeroPadding2D([[1, 1],[1, 1]])(x)
@@ -689,8 +800,7 @@ def progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, constrained = False, output_
         x = tf.keras.layers.Conv2D(512, (3 , 3), strides=1, kernel_initializer=initializer, padding = 'same', kernel_constraint=constraint)(x) # (bs, 512, 32, 32)
         x = tf.keras.layers.LeakyReLU()(x)
 
-        # Adaptação para finalizar com 30x30    
-        x = norm_layer()(x)
+        # Adaptação para finalizar com 30x30
         x = tf.keras.layers.LeakyReLU()(x)
         x = tf.keras.layers.Conv2D(1, 3, strides=1, kernel_initializer=initializer)(x) # (bs, 30, 30, 1)
 
@@ -740,20 +850,21 @@ if __name__ == "__main__":
 
     # Testa os shapes dos modelos
     OUTPUT_CHANNELS = 3
+    NORM_TYPE = 'instancenorm'
     for IMG_SIZE in [256, 128]:
         print(f"\n---- IMG_SIZE = {IMG_SIZE}")
         print("Geradores:")
-        print("Pix2Pix                              ", pix2pix_generator(IMG_SIZE, OUTPUT_CHANNELS).output.shape)
-        print("U-Net                                ", unet_generator(IMG_SIZE, OUTPUT_CHANNELS).output.shape)
-        print("CycleGAN generator                   ", cyclegan_generator(IMG_SIZE, OUTPUT_CHANNELS, create_latent_vector = False).output.shape)
-        print("CycleGAN generator adaptado          ", cyclegan_generator(IMG_SIZE, OUTPUT_CHANNELS, create_latent_vector = True).output.shape)
-        print("Full Residual                        ", full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS).output.shape)
-        print("Full Residual Disentangled           ", full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'normal').output.shape)
-        print("Full Residual Smooth Disentangle     ", full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'smooth').output.shape)
-        print("Simple Decoder                       ", simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS).output.shape)
-        print("Simple Decoder Disentangled          ", simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'normal').output.shape)
-        print("Simple Decoder Smooth Disentangle    ", simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, disentanglement = 'smooth').output.shape)
+        print("Pix2Pix                                  ", pix2pix_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE).output.shape)
+        print("U-Net                                    ", unet_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE).output.shape)
+        print("CycleGAN (residual) generator            ", residual_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE, create_latent_vector = False).output.shape)
+        print("CycleGAN (residual) generator adaptado   ", residual_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE, create_latent_vector = True).output.shape)
+        print("Full Residual                            ", full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE).output.shape)
+        print("Full Residual Disentangled               ", full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE, disentanglement = 'normal').output.shape)
+        print("Full Residual Smooth Disentangle         ", full_residual_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE, disentanglement = 'smooth').output.shape)
+        print("Simple Decoder                           ", simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE).output.shape)
+        print("Simple Decoder Disentangled              ", simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE, disentanglement = 'normal').output.shape)
+        print("Simple Decoder Smooth Disentangle        ", simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE, disentanglement = 'smooth').output.shape)
         print("Discriminadores:")
-        print("PatchGAN                             ", patchgan_discriminator(IMG_SIZE, OUTPUT_CHANNELS).output.shape)
-        print("ProGAN (output_type = unit)          ", progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, output_type='unit').output.shape)
-        print("ProGAN (output_type = patchgan)      ", progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, output_type='patchgan').output.shape)
+        print("PatchGAN                                 ", patchgan_discriminator(IMG_SIZE, OUTPUT_CHANNELS).output.shape)
+        print("ProGAN (output_type = unit)              ", progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, output_type='unit').output.shape)
+        print("ProGAN (output_type = patchgan)          ", progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, output_type='patchgan').output.shape)

@@ -23,6 +23,11 @@ model_FID = InceptionV3(include_top=False, pooling='avg', input_shape=(299,299,3
 #%% FUNÇÕES BASE
 
 def evaluate_metrics(sample_ds, generator, evaluate_is, evaluate_fid, evaluate_l1, verbose = False):
+	"""Calcula as métricas de qualidade.
+
+	Calcula Inception Score e Frechét Inception Distance para o gerador.
+	Calcula a distância L1 (distância média absoluta pixel a pixel) entre a imagem sintética e a objetivo.
+	"""
 	t1 = time.time()
 	inception_score = []
 	frechet_inception_distance = []
@@ -157,9 +162,7 @@ def get_frechet_inception_distance(image1, image2):
 # L1 Distance
 def get_l1_distance(image1, image2):
 
-	'''
-	Calcula a distância L1 entre duas imagens
-	'''
+	'''Calcula a distância L1 (distância média absoluta pixel a pixel) entre duas imagens'''
 
 	# Calcula a L1 distance entre as duas imagens
 	l1_dist = tf.reduce_mean(tf.abs(image1 - image2))
@@ -168,8 +171,8 @@ def get_l1_distance(image1, image2):
 
 # Acurácia do discriminador
 def evaluate_accuracy(generator, discriminator, test_ds, y_real, y_pred, window = 100):
-    
-    # Gera uma imagem-base
+    """Avalia a acurácia do discriminador, como um classificador binário."""
+	# Gera uma imagem-base
     for img_real in test_ds.take(1):
         target = img_real
 

@@ -20,8 +20,8 @@ import transferlearning as transfer
 #%% Weights & Biases
 
 import wandb
-wandb.init(project='autoencoders', entity='vinyluis', mode="disabled")
-# wandb.init(project='autoencoders', entity='vinyluis', mode="online")
+# wandb.init(project='autoencoders', entity='vinyluis', mode="disabled")
+wandb.init(project='autoencoders', entity='vinyluis', mode="online")
 
 #%% Config Tensorflow
 
@@ -41,18 +41,22 @@ config.IMG_SIZE = 128
 config.OUTPUT_CHANNELS = 3
 config.USE_CACHE = True
 config.DATASET = "CelebaHQ" # "CelebaHQ" ou "InsetosFlickr"
+config.USE_RANDOM_JITTER = False
+
+# Parâmetros de rede
+config.NORM_TYPE = "batchnorm" # "batchnorm", "instancenorm" ou "pixelnorm"
+config.LAMBDA = 100 # Efeito da Loss L1. Default = 100.
+config.LAMBDA_DISC = 1 # Ajuste de escala da loss do dicriminador
+config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
+config.NUM_RESIDUAL_BLOCKS = 6 # Número de blocos residuais dos geradores residuais
+# config.ADAM_BETA_1 e config.FIRST_EPOCH são definidos em código
 
 # Parâmetros de treinamento
-config.LAMBDA = 1000 # Efeito da Loss L1
-config.LAMBDA_DISC = 1 # Ajuste de escala da loss do dicriminador
-config.BATCH_SIZE = 8
-config.BUFFER_SIZE = 150
+config.BATCH_SIZE = 20
+config.BUFFER_SIZE = 100
 config.LEARNING_RATE_G = 1e-5
 config.LEARNING_RATE_D = 1e-5
-config.EPOCHS = 5
-config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
-config.NUM_RESIDUAL_BLOCKS = 6 # Número de blocos residuais do gerador CycleGAN
-# config.ADAM_BETA_1 e config.FIRST_EPOCH são definidos em código
+config.EPOCHS = 10
 
 # Parâmetros das métricas
 config.EVALUATE_IS = True
@@ -78,7 +82,7 @@ config.NUM_TEST_PRINTS = 500 # Controla quantas imagens de teste serão feitas. 
 config.SAVE_CHECKPOINT = True
 config.CHECKPOINT_EPOCHS = 1
 config.KEEP_CHECKPOINTS = 1
-config.LOAD_CHECKPOINT = True
+config.LOAD_CHECKPOINT = False
 config.SAVE_MODELS = True
 
 # Outras configurações
@@ -88,11 +92,11 @@ SHUTDOWN_AFTER_FINISH = False # Controla se o PC será desligado quando o códig
 #%% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp = ""
+config.exp = "R02B"
 
-# Modelo do gerador. Possíveis = 'pix2pix', 'unet', 'cyclegan', 'cyclegan_vetor', 'full_residual', 'full_residual_dis', 'full_residual_smooth',
+# Modelo do gerador. Possíveis = 'pix2pix', 'unet', 'residual', 'residual_vetor', 'full_residual', 'full_residual_dis', 'full_residual_smooth',
 #                                'simple_decoder', 'simple_decoder_dis', 'simple_decoder_smooth', 'transfer'
-config.gen_model = 'unet'
+config.gen_model = 'full_residual'
 
 # Modelo do discriminador. Possíveis = 'patchgan', 'progan', 'progan_adapted'
 config.disc_model = 'patchgan'
@@ -120,8 +124,7 @@ else:
 # Valida se pode ser usado o tipo de loss com o tipo de discriminador
 if config.loss_type == 'patchganloss':
     config.ADAM_BETA_1 = 0.5
-    if not(config.disc_model == 'patchgan' or config.disc_model == 'patchgan_adapted'
-            or  config.disc_model == 'progan_adapted' or  config.disc_model == 'progan'):
+    if not(config.disc_model == 'patchgan' or  config.disc_model == 'progan_adapted' or  config.disc_model == 'progan'):
         raise utils.LossCompatibilityError(config.loss_type, config.disc_model)
 elif config.loss_type == 'wgan' or config.loss_type == 'wgan-gp':
     config.ADAM_BETA_1 = 0.9
@@ -132,16 +135,19 @@ else:
 if not(config.IMG_SIZE == 256 or config.IMG_SIZE == 128):
     raise utils.sizeCompatibilityError(config.IMG_SIZE)
 
-# Valida se o número de blocos residuais é válido para o gerador CycleGAN
-if config.gen_model == 'cyclegan':
-    if not (config.NUM_RESIDUAL_BLOCKS == 6 or config.NUM_RESIDUAL_BLOCKS == 9):
-        raise BaseException("O número de blocos residuais do gerador CycleGAN não está correto. Opções = 6 ou 9.")
+# Valida se o número de blocos residuais é válido para o gerador residual
+if not (config.NUM_RESIDUAL_BLOCKS == 6 or config.NUM_RESIDUAL_BLOCKS == 9):
+    raise BaseException("O número de blocos residuais do gerador não está correto. Opções = 6 ou 9.")
+
+# Valida se o tipo de normalização é válido
+if not (config.NORM_TYPE == 'batchnorm' or config.NORM_TYPE == 'instancenorm' or config.NORM_TYPE == 'pixelnorm'):
+    raise BaseException("Tipo de normalização desconhecida.")
 
 #%% PREPARA AS PASTAS
 
 ### Prepara o nome da pasta que vai salvar o resultado dos experimentos
 experiment_root = base_root + 'Experimentos/'
-experiment_folder = experiment_root + 'EXP' + config.exp + '_'
+experiment_folder = experiment_root + 'EXP_' + config.exp + '_'
 experiment_folder += 'gen_'
 experiment_folder += config.gen_model
 experiment_folder += '_disc_'
@@ -184,9 +190,11 @@ dataset_root = '../../0_Datasets/'
 
 if config.DATASET == 'CelebaHQ':
     dataset_folder = dataset_root + 'celeba_hq/'
+    dataset_filter_string = '*/*/*.jpg'
 
 elif config.DATASET == 'InsetosFlickr':
     dataset_folder = dataset_root + 'flickr_internetarchivebookimages/'
+    dataset_filter_string = '*/*.jpg'
 
 else:
     raise BaseException("Selecione um dataset válido")
@@ -201,16 +209,16 @@ val_folder = dataset_folder + 'val'
 print("Carregando o dataset...")
 
 # Dataset de treinamento
-train_dataset = tf.data.Dataset.list_files(train_folder+'*/*.jpg')
+train_dataset = tf.data.Dataset.list_files(train_folder + dataset_filter_string)
 config.TRAIN_SIZE = len(list(train_dataset))
-train_dataset = train_dataset.map(lambda x: utils.load_image_train(x, config.IMG_SIZE, 3))
+train_dataset = train_dataset.map(lambda x: utils.load_image_train(x, config.IMG_SIZE, config.OUTPUT_CHANNELS, config.USE_RANDOM_JITTER))
 if config.USE_CACHE:
     train_dataset = train_dataset.cache()
 train_dataset = train_dataset.shuffle(config.BUFFER_SIZE)
 train_dataset = train_dataset.batch(config.BATCH_SIZE)
 
 # Dataset de teste
-test_dataset = tf.data.Dataset.list_files(test_folder+'*/*.jpg')
+test_dataset = tf.data.Dataset.list_files(test_folder + dataset_filter_string)
 config.TEST_SIZE = len(list(test_dataset))
 test_dataset = test_dataset.map(lambda x: utils.load_image_test(x, config.IMG_SIZE))
 if config.USE_CACHE:
@@ -218,7 +226,7 @@ if config.USE_CACHE:
 test_dataset = test_dataset.batch(1)
 
 # Dataset de validação
-val_dataset = tf.data.Dataset.list_files(val_folder+'*/*.jpg')
+val_dataset = tf.data.Dataset.list_files(val_folder + dataset_filter_string)
 config.VAL_SIZE = len(list(val_dataset))
 val_dataset = val_dataset.map(lambda x: utils.load_image_test(x, config.IMG_SIZE))
 if config.USE_CACHE:
@@ -260,6 +268,13 @@ config.EVALUATED_IMAGES_VAL = config.METRIC_SAMPLE_SIZE_VAL * config.METRIC_BATC
 
 @tf.function
 def train_step(generator, discriminator, input_image, target):
+    """Realiza um passo de treinamento no framework adversário.
+
+    A função gera a imagem sintética e a discrimina.
+    Usando a imagem real e a sintética, são calculadas as losses do gerador e do discriminador.
+    Finalmente usa backpropagation para atualizar o gerador e o discriminador, e retorna as losses
+    """
+
     with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
         
         gen_image = generator(input_image, training = True)
@@ -305,6 +320,12 @@ def train_step(generator, discriminator, input_image, target):
 
 @tf.function
 def train_step_not_adversarial(generator, input_image, target):
+    """Realiza um passo de treinamento no framework não adversário.
+
+    A função gera a imagem sintética e a discrimina.
+    Usando a imagem real e a sintética, são calculadas as losses do gerador.
+    Finalmente usa backpropagation para atualizar o gerador, e retorna as losses.
+    """
     with tf.GradientTape() as gen_tape:
         
         gen_image = generator(input_image, training = True)
@@ -332,7 +353,13 @@ def train_step_not_adversarial(generator, input_image, target):
     return loss_dict
 
 def evaluate_validation_losses(generator, discriminator, input_image, target):
-        
+    """Avalia as losses para imagens de validação no treinamento adversário.
+
+    A função gera a imagem sintética e a discrimina.
+    Usando a imagem real e a sintética, são calculadas as losses do gerador e do discriminador.
+    Isso é úitil para monitorar o quão bem a rede está generalizando com dados não vistos.
+    """
+
     gen_image = generator(input_image, training = True)
 
     disc_real = discriminator([input_image, target], training=True)
@@ -369,7 +396,13 @@ def evaluate_validation_losses(generator, discriminator, input_image, target):
     return loss_dict
 
 def evaluate_validation_losses_not_adversarial(generator, input_image, target):
-        
+    """Avalia as losses para imagens de validação, no treinamento não adversário.
+
+    A função gera a imagem sintética e a discrimina.
+    Usando a imagem real e a sintética, são calculadas as losses do gerador.
+    Isso é úitil para monitorar o quão bem a rede está generalizando com dados não vistos.
+    """
+
     gen_image = generator(input_image, training = True)
 
     if config.loss_type == 'l1':
@@ -392,6 +425,14 @@ def evaluate_validation_losses_not_adversarial(generator, input_image, target):
     return loss_dict
 
 def fit(generator, discriminator, train_ds, val_ds, first_epoch, epochs, adversarial = True):
+    """Treina uma rede com um framework adversário (GAN) ou não adversário.
+
+    Esta função treina a rede usando imagens da base de dados de treinamento,
+    enquanto mede o desempenho e as losses da rede com a base de validação.
+
+    Inclui a geração de imagens fixas para monitorar a evolução do treinamento por época,
+    e o registro de todas as métricas na plataforma Weights and Biases.
+    """
     
     print("INICIANDO TREINAMENTO")
 
@@ -498,27 +539,27 @@ if config.loss_type == 'wgan':
 
 # ---- GERADORES
 if config.gen_model == 'pix2pix':
-    generator = net.pix2pix_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS)
+    generator = net.pix2pix_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE)
 elif config.gen_model == 'unet':
-    generator = net.unet_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS)
-elif config.gen_model == 'cyclegan':
-    generator = net.cyclegan_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
-elif config.gen_model == 'cyclegan_vetor': 
-    generator = net.cyclegan_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, create_latent_vector = True, num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
+    generator = net.unet_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE)
+elif config.gen_model == 'residual':
+    generator = net.residual_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
+elif config.gen_model == 'residual_vetor': 
+    generator = net.residual_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, create_latent_vector = True, num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
 elif config.gen_model == 'full_residual':
-    generator = net.full_residual_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS)
+    generator = net.full_residual_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
 elif config.gen_model == 'full_residual_dis':
-    generator = net.full_residual_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, disentanglement = 'normal')
+    generator = net.full_residual_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, disentanglement = 'normal', num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
 elif config.gen_model == 'full_residual_smooth':
-    generator = net.full_residual_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, disentanglement = 'smooth')
+    generator = net.full_residual_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, disentanglement = 'smooth', num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
 elif config.gen_model == 'simple_decoder':
-    generator = net.simple_decoder_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS)
+    generator = net.simple_decoder_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
 elif config.gen_model == 'simple_decoder_dis':
-    generator = net.simple_decoder_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, disentanglement = 'normal')
+    generator = net.simple_decoder_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, disentanglement = 'normal', num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
 elif config.gen_model == 'simple_decoder_smooth':
-    generator = net.simple_decoder_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, disentanglement = 'smooth')
+    generator = net.simple_decoder_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, disentanglement = 'smooth', num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
 elif config.gen_model == 'transfer':
-    generator = transfer.transfer_model(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.transfer_generator_path, config.transfer_generator_filename, 
+    generator = transfer.transfer_model(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, config.transfer_generator_path, config.transfer_generator_filename, 
     config.transfer_middle_model, config.transfer_encoder_last_layer, config.transfer_decoder_first_layer, config.transfer_trainable,
     config.transfer_disentangle, config.transfer_smooth_vector)
 else:
@@ -567,12 +608,14 @@ if config.LOAD_CHECKPOINT:
         config.FIRST_EPOCH = int(latest_checkpoint.split("-")[1]) + 1
     else:
         config.FIRST_EPOCH = 1
+else:
+    config.FIRST_EPOCH = 1
         
 
 #%% TREINAMENTO
 
 if config.FIRST_EPOCH <= config.EPOCHS:
-    fit(generator, disc, train_dataset, val_dataset, config.FIRST_EPOCH, config.EPOCHS, dversarial = config.ADVERSARIAL)
+    fit(generator, disc, train_dataset, val_dataset, config.FIRST_EPOCH, config.EPOCHS, adversarial = config.ADVERSARIAL)
 
 
 #%% VALIDAÇÃO
@@ -603,7 +646,7 @@ if config.VALIDATION:
         progbar.update(i)
 
         # Salva o arquivo
-        filename = "val_results_" + str(c+1).zfill(len(str(num_imgs))) + ".jpg"
+        filename = "val_results_" + str(i).zfill(len(str(num_imgs))) + ".jpg"
         utils.generate_images(generator, image, result_val_folder, filename, QUIET_PLOT = QUIET_PLOT)
 
 #%% TESTE
@@ -635,7 +678,7 @@ if config.TEST:
         progbar.update(i)
 
         # Salva o arquivo
-        filename = "test_results_" + str(c+1).zfill(len(str(num_imgs))) + ".jpg"
+        filename = "test_results_" + str(i).zfill(len(str(num_imgs))) + ".jpg"
         utils.generate_images(generator, image, result_test_folder, filename, QUIET_PLOT = QUIET_PLOT)
 
     dt = time.time() - t1
