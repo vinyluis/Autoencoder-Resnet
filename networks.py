@@ -1,4 +1,3 @@
-from lib2to3.pytree import Base
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -868,3 +867,13 @@ if __name__ == "__main__":
         print("PatchGAN                                 ", patchgan_discriminator(IMG_SIZE, OUTPUT_CHANNELS).output.shape)
         print("ProGAN (output_type = unit)              ", progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, output_type='unit').output.shape)
         print("ProGAN (output_type = patchgan)          ", progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, output_type='patchgan').output.shape)
+
+    
+    """
+    disc_patchgan = patchgan_discriminator(IMG_SIZE, OUTPUT_CHANNELS)
+    disc_progan_unit = progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, output_type='unit')
+    disc_progan_patchgan = progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, output_type='patchgan')
+    disc_patchgan.save("disc_patchgan.h5")
+    disc_progan_unit.save("disc_progan_unit.h5")
+    disc_progan_patchgan.save("disc_progan_patchgan.h5")
+    """

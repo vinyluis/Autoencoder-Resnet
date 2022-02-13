@@ -30,8 +30,16 @@ print("---- VERIFICA SE A GPU ESTÁ DISPONÍVEL:")
 print(tf.config.list_physical_devices('GPU'))
 print("")
 
+# Verifica a versão do Tensorflow
+tf_version = tf. __version__
+print(f"Utilizando Tensorflow v {tf_version}")
+print("")
+
 #%% HIPERPARÂMETROS E CONFIGURAÇÕES
 config = wandb.config # Salva os hiperparametros no Weights & Biases também
+
+# Salva a versão do TF que foi usada no experimento
+config.tf_version = tf_version
 
 # Root do sistema
 base_root = ""
@@ -44,15 +52,16 @@ config.DATASET = "CelebaHQ" # "CelebaHQ" ou "InsetosFlickr"
 config.USE_RANDOM_JITTER = False
 
 # Parâmetros de rede
-config.NORM_TYPE = "batchnorm" # "batchnorm", "instancenorm" ou "pixelnorm"
+config.NORM_TYPE = "batchnorm" # "batchnorm", "instancenorm", "pixelnorm"
 config.LAMBDA = 100 # Efeito da Loss L1. Default = 100.
 config.LAMBDA_DISC = 1 # Ajuste de escala da loss do dicriminador
 config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
 config.NUM_RESIDUAL_BLOCKS = 6 # Número de blocos residuais dos geradores residuais
+config.DISENTANGLEMENT = 'none' # 'none', 'normal', 'smooth'
 # config.ADAM_BETA_1 e config.FIRST_EPOCH são definidos em código
 
 # Parâmetros de treinamento
-config.BATCH_SIZE = 20
+config.BATCH_SIZE = 12
 config.BUFFER_SIZE = 100
 config.LEARNING_RATE_G = 1e-5
 config.LEARNING_RATE_D = 1e-5
@@ -92,17 +101,20 @@ SHUTDOWN_AFTER_FINISH = False # Controla se o PC será desligado quando o códig
 #%% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp = "R02B"
+config.exp = "R04A"
 
-# Modelo do gerador. Possíveis = 'pix2pix', 'unet', 'residual', 'residual_vetor', 'full_residual', 'full_residual_dis', 'full_residual_smooth',
-#                                'simple_decoder', 'simple_decoder_dis', 'simple_decoder_smooth', 'transfer'
-config.gen_model = 'full_residual'
+if config.exp != "":
+    print(f"Experimento {config.exp}")
+
+# Modelo do gerador. Possíveis = 'pix2pix', 'unet', 'residual', 'residual_vetor', 
+#                                'full_residual', 'simple_decoder', 'transfer'
+config.gen_model = 'residual'
 
 # Modelo do discriminador. Possíveis = 'patchgan', 'progan', 'progan_adapted'
-config.disc_model = 'patchgan'
+config.disc_model = 'progan'
 
 # Tipo de loss. Possíveis = 'patchganloss', 'wgan', 'wgan-gp', 'l1', 'l2'
-config.loss_type = 'patchganloss'
+config.loss_type = 'wgan-gp'
 
 # Faz a configuração do transfer learning, se for selecionado
 if config.gen_model == 'transfer':
@@ -142,6 +154,12 @@ if not (config.NUM_RESIDUAL_BLOCKS == 6 or config.NUM_RESIDUAL_BLOCKS == 9):
 # Valida se o tipo de normalização é válido
 if not (config.NORM_TYPE == 'batchnorm' or config.NORM_TYPE == 'instancenorm' or config.NORM_TYPE == 'pixelnorm'):
     raise BaseException("Tipo de normalização desconhecida.")
+
+# Valida o tipo de disentanglement
+if not (config.DISENTANGLEMENT == 'smooth' or config.DISENTANGLEMENT == 'normal' or
+        config.DISENTANGLEMENT == None or config.DISENTANGLEMENT == 'none'):
+    raise BaseException("Selecione um tipo válido de desemaranhamento")
+
 
 #%% PREPARA AS PASTAS
 
@@ -249,12 +267,12 @@ do dataset e o valor em EVALUATE_PERCENT_OF_DATASET
 
 # Configuração dos batches sizes
 if config.DATASET == 'CelebaHQ':
-    config.METRIC_BATCH_SIZE = 16
+    config.METRIC_BATCH_SIZE = 32
 
 elif config.DATASET == 'InsetosFlickr':
     config.METRIC_BATCH_SIZE = 5 # Não há imagens o suficiente para fazer um batch size muito grande
 else:
-    config.METRIC_BATCH_SIZE = 10
+    config.METRIC_BATCH_SIZE = 16
 
 # Configuração dos sample sizes
 config.METRIC_SAMPLE_SIZE_TRAIN = int(config.EVALUATE_PERCENT_OF_DATASET_TRAIN * config.TRAIN_SIZE / config.METRIC_BATCH_SIZE)
@@ -291,7 +309,7 @@ def train_step(generator, discriminator, input_image, target):
             disc_loss, disc_real_loss, disc_fake_loss = losses.loss_wgan_discriminator(disc_real, disc_gen)
 
         elif config.loss_type == 'wgan-gp':
-            gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_wgangp_generator(disc_gen, gen_image, target)
+            gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_wgangp_generator(disc_gen, gen_image, target, config.LAMBDA)
             disc_loss, disc_real_loss, disc_fake_loss = losses.loss_wgangp_discriminator(discriminator, disc_real, disc_gen, input_image, gen_image, target, config.LAMBDA_GP)
 
         # Incluído o else para não dar erro 'gen_loss' is used before assignment
@@ -302,7 +320,7 @@ def train_step(generator, discriminator, input_image, target):
 
     generator_gradients = gen_tape.gradient(gen_loss, generator.trainable_variables)
     discriminator_gradients = disc_tape.gradient(disc_loss, disc.trainable_variables)
-    
+
     generator_optimizer.apply_gradients(zip(generator_gradients, generator.trainable_variables))
     discriminator_optimizer.apply_gradients(zip(discriminator_gradients, disc.trainable_variables))
     
@@ -374,7 +392,7 @@ def evaluate_validation_losses(generator, discriminator, input_image, target):
         disc_loss, disc_real_loss, disc_fake_loss = losses.loss_wgan_discriminator(disc_real, disc_gen)
 
     elif config.loss_type == 'wgan-gp':
-        gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_wgangp_generator(disc_gen, gen_image, target)
+        gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_wgangp_generator(disc_gen, gen_image, target, config.LAMBDA)
         disc_loss, disc_real_loss, disc_fake_loss = losses.loss_wgangp_discriminator(discriminator, disc_real, disc_gen, input_image, gen_image, target, config.LAMBDA_GP)
 
     # Incluído o else para não dar erro 'gen_loss' is used before assignment
@@ -547,17 +565,9 @@ elif config.gen_model == 'residual':
 elif config.gen_model == 'residual_vetor': 
     generator = net.residual_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, create_latent_vector = True, num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
 elif config.gen_model == 'full_residual':
-    generator = net.full_residual_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
-elif config.gen_model == 'full_residual_dis':
-    generator = net.full_residual_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, disentanglement = 'normal', num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
-elif config.gen_model == 'full_residual_smooth':
-    generator = net.full_residual_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, disentanglement = 'smooth', num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
+    generator = net.full_residual_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, disentanglement = config.DISENTANGLEMENT, num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
 elif config.gen_model == 'simple_decoder':
-    generator = net.simple_decoder_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
-elif config.gen_model == 'simple_decoder_dis':
-    generator = net.simple_decoder_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, disentanglement = 'normal', num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
-elif config.gen_model == 'simple_decoder_smooth':
-    generator = net.simple_decoder_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, disentanglement = 'smooth', num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
+    generator = net.simple_decoder_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, disentanglement = config.DISENTANGLEMENT, num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
 elif config.gen_model == 'transfer':
     generator = transfer.transfer_model(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, config.transfer_generator_path, config.transfer_generator_filename, 
     config.transfer_middle_model, config.transfer_encoder_last_layer, config.transfer_decoder_first_layer, config.transfer_trainable,

@@ -98,9 +98,9 @@ os autores criaram o conceito de Gradient Penalty para manter essa condição de
 - O gerador tem a MESMA loss da WGAN
 - O discriminador, em vez de ter seus pesos limitados pelo clipping, ganha uma penalidade de gradiente que deve ser calculada
 '''
-def loss_wgangp_generator(disc_generated_output, gen_output, target):
+def loss_wgangp_generator(disc_generated_output, gen_output, target, lambda_l1):
     """Calcula a loss de wasserstein com gradient-penalty (WGAN-GP) para o gerador."""
-    return loss_wgan_generator(disc_generated_output, gen_output, target)
+    return loss_wgan_generator(disc_generated_output, gen_output, target, lambda_l1)
 
 def loss_wgangp_discriminator(disc, disc_real_output, disc_generated_output, real_img, generated_img, target, lambda_gp):
     """Calcula a loss de wasserstein com gradient-penalty (WGAN-GP) para o discriminador."""
