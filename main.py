@@ -52,7 +52,7 @@ config.DATASET = "CelebaHQ" # "CelebaHQ" ou "InsetosFlickr"
 config.USE_RANDOM_JITTER = False
 
 # Parâmetros de rede
-config.NORM_TYPE = "batchnorm" # "batchnorm", "instancenorm", "pixelnorm"
+config.NORM_TYPE = "instancenorm" # "batchnorm", "instancenorm", "pixelnorm"
 config.LAMBDA = 100 # Efeito da Loss L1. Default = 100.
 config.LAMBDA_DISC = 1 # Ajuste de escala da loss do dicriminador
 config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
@@ -61,7 +61,7 @@ config.DISENTANGLEMENT = 'none' # 'none', 'normal', 'smooth'
 # config.ADAM_BETA_1 e config.FIRST_EPOCH são definidos em código
 
 # Parâmetros de treinamento
-config.BATCH_SIZE = 12
+config.BATCH_SIZE = 6
 config.BUFFER_SIZE = 100
 config.LEARNING_RATE_G = 1e-5
 config.LEARNING_RATE_D = 1e-5
@@ -101,14 +101,14 @@ SHUTDOWN_AFTER_FINISH = False # Controla se o PC será desligado quando o códig
 #%% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp = "R04A"
+config.exp = "R04C"
 
 if config.exp != "":
     print(f"Experimento {config.exp}")
 
 # Modelo do gerador. Possíveis = 'pix2pix', 'unet', 'residual', 'residual_vetor', 
 #                                'full_residual', 'simple_decoder', 'transfer'
-config.gen_model = 'residual'
+config.gen_model = 'full_residual'
 
 # Modelo do discriminador. Possíveis = 'patchgan', 'progan', 'progan_adapted'
 config.disc_model = 'progan'
@@ -476,6 +476,11 @@ def fit(generator, discriminator, train_ds, val_ds, first_epoch, epochs, adversa
     y_real = []
     y_pred = []
 
+    # Uso de memória
+    mem_usage = utils.print_used_memory()
+    wandb.log(mem_usage)
+    print("")
+
     ########## LOOP DE TREINAMENTO ##########
     for epoch in range(first_epoch, epochs+1):
         t_start = time.time()
@@ -528,7 +533,7 @@ def fit(generator, discriminator, train_ds, val_ds, first_epoch, epochs, adversa
         ### AVALIAÇÃO DAS MÉTRICAS DE QUALIDADE ###
         if (config.EVALUATE_EVERY_EPOCH == True or
             config.EVALUATE_EVERY_EPOCH == False and epoch == epochs):
-            print("Avaliação das métricas de qualidade")
+            print("Avaliando as métricas de qualidade...")
 
             if config.EVALUATE_TRAIN_IMGS:
                 # Avaliação para as imagens de treino
@@ -543,10 +548,16 @@ def fit(generator, discriminator, train_ds, val_ds, first_epoch, epochs, adversa
             val_metrics = {k+"_val": v for k, v in metric_results.items()} # Renomeia o dicionário para incluir "val" no final das keys
             wandb.log(val_metrics)
 
+        # Uso de memória
+        mem_usage = utils.print_used_memory()
+        wandb.log(mem_usage)
+
         # Loga o tempo de duração da época no wandb
         dt = time.time() - t_start
         print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
         wandb.log({'epoch time (s)': dt, 'epoch time (min)': dt/60})
+
+        
         
 #%% PREPARAÇÃO DOS MODELOS
 
@@ -592,6 +603,29 @@ else:
 generator_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE_G, beta_1=config.ADAM_BETA_1)
 if config.ADVERSARIAL:  
     discriminator_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE_D, beta_1=config.ADAM_BETA_1)
+
+#%% CONSUMO DE MEMÓRIA
+print("Uso de memória dos modelos:")
+gen_mem_usage = utils.get_model_memory_usage(config.BATCH_SIZE, generator)
+disc_mem_usage = utils.get_model_memory_usage(config.BATCH_SIZE, disc)
+print(f"Gerador         = {gen_mem_usage:,.2f} GB")
+print(f"Discriminador   = {disc_mem_usage:,.2f} GB")
+
+print("Uso de memória dos datasets:")
+train_ds_mem_usage = utils.get_full_dataset_memory_usage(config.TRAIN_SIZE, config.IMG_SIZE, config.OUTPUT_CHANNELS, data_type = train_dataset.element_spec.dtype)
+test_ds_mem_usage = utils.get_full_dataset_memory_usage(config.TEST_SIZE, config.IMG_SIZE, config.OUTPUT_CHANNELS, data_type = test_dataset.element_spec.dtype)
+val_ds_mem_usage = utils.get_full_dataset_memory_usage(config.VAL_SIZE, config.IMG_SIZE, config.OUTPUT_CHANNELS, data_type = val_dataset.element_spec.dtype)
+print(f"Train dataset   = {train_ds_mem_usage:,.2f} GB")
+print(f"Test dataset    = {test_ds_mem_usage:,.2f} GB")
+print(f"Val dataset     = {val_ds_mem_usage:,.2f} GB")
+
+print("Uso de memória básico em runtime:")
+runtime_base_memory = (gen_mem_usage + disc_mem_usage + train_ds_mem_usage + val_ds_mem_usage)
+print(f"gen + disc + train_ds + val_ds = {runtime_base_memory:,.2f} GB")
+print("")
+
+wandb.log({"gen_mem_usage_gbytes": gen_mem_usage, "disc_mem_usage_gbbytes" : disc_mem_usage, "train_ds_mem_usage_gbytes" : train_ds_mem_usage,
+           "test_ds_mem_usage_gbytes" : test_ds_mem_usage, "val_ds_mem_usage_gbytes" : val_ds_mem_usage})
 
 #%% CHECKPOINTS
 
