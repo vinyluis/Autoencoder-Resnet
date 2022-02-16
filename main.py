@@ -61,7 +61,7 @@ config.DISENTANGLEMENT = 'none' # 'none', 'normal', 'smooth'
 # config.ADAM_BETA_1 e config.FIRST_EPOCH são definidos em código
 
 # Parâmetros de treinamento
-config.BATCH_SIZE = 6
+config.BATCH_SIZE = 8
 config.BUFFER_SIZE = 100
 config.LEARNING_RATE_G = 1e-5
 config.LEARNING_RATE_D = 1e-5
@@ -101,14 +101,14 @@ SHUTDOWN_AFTER_FINISH = False # Controla se o PC será desligado quando o códig
 #%% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp = "R04C"
+config.exp = "R04D"
 
 if config.exp != "":
     print(f"Experimento {config.exp}")
 
 # Modelo do gerador. Possíveis = 'pix2pix', 'unet', 'residual', 'residual_vetor', 
 #                                'full_residual', 'simple_decoder', 'transfer'
-config.gen_model = 'full_residual'
+config.gen_model = 'simple_decoder'
 
 # Modelo do discriminador. Possíveis = 'patchgan', 'progan', 'progan_adapted'
 config.disc_model = 'progan'
@@ -310,7 +310,7 @@ def train_step(generator, discriminator, input_image, target):
 
         elif config.loss_type == 'wgan-gp':
             gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_wgangp_generator(disc_gen, gen_image, target, config.LAMBDA)
-            disc_loss, disc_real_loss, disc_fake_loss = losses.loss_wgangp_discriminator(discriminator, disc_real, disc_gen, input_image, gen_image, target, config.LAMBDA_GP)
+            disc_loss, disc_real_loss, disc_fake_loss, gp = losses.loss_wgangp_discriminator(discriminator, disc_real, disc_gen, input_image, gen_image, target, config.LAMBDA_GP)
 
         # Incluído o else para não dar erro 'gen_loss' is used before assignment
         else:
@@ -333,6 +333,8 @@ def train_step(generator, discriminator, input_image, target):
         'disc_real_loss' : disc_real_loss,
         'disc_fake_loss' : disc_fake_loss,
     }
+    if config.loss_type == 'wgan-gp':
+        loss_dict['gp'] = gp
 
     return loss_dict
 
@@ -393,7 +395,7 @@ def evaluate_validation_losses(generator, discriminator, input_image, target):
 
     elif config.loss_type == 'wgan-gp':
         gen_loss, gen_gan_loss, gen_l1_loss = losses.loss_wgangp_generator(disc_gen, gen_image, target, config.LAMBDA)
-        disc_loss, disc_real_loss, disc_fake_loss = losses.loss_wgangp_discriminator(discriminator, disc_real, disc_gen, input_image, gen_image, target, config.LAMBDA_GP)
+        disc_loss, disc_real_loss, disc_fake_loss, gp = losses.loss_wgangp_discriminator(discriminator, disc_real, disc_gen, input_image, gen_image, target, config.LAMBDA_GP)
 
     # Incluído o else para não dar erro 'gen_loss' is used before assignment
     else:
@@ -410,6 +412,8 @@ def evaluate_validation_losses(generator, discriminator, input_image, target):
         'disc_real_loss' : disc_real_loss,
         'disc_fake_loss' : disc_fake_loss,
     }
+    if config.loss_type == 'wgan-gp':
+        loss_dict['gp'] = gp
     
     return loss_dict
 
@@ -556,9 +560,7 @@ def fit(generator, discriminator, train_ds, val_ds, first_epoch, epochs, adversa
         dt = time.time() - t_start
         print ('Tempo usado para a época {} foi de {:.2f} min ({:.2f} sec)\n'.format(epoch, dt/60, dt))
         wandb.log({'epoch time (s)': dt, 'epoch time (min)': dt/60})
-
-        
-        
+  
 #%% PREPARAÇÃO DOS MODELOS
 
 # Define se irá ter a restrição de tamanho de peso da WGAN (clipping)
@@ -618,10 +620,6 @@ val_ds_mem_usage = utils.get_full_dataset_memory_usage(config.VAL_SIZE, config.I
 print(f"Train dataset   = {train_ds_mem_usage:,.2f} GB")
 print(f"Test dataset    = {test_ds_mem_usage:,.2f} GB")
 print(f"Val dataset     = {val_ds_mem_usage:,.2f} GB")
-
-print("Uso de memória básico em runtime:")
-runtime_base_memory = (gen_mem_usage + disc_mem_usage + train_ds_mem_usage + val_ds_mem_usage)
-print(f"gen + disc + train_ds + val_ds = {runtime_base_memory:,.2f} GB")
 print("")
 
 wandb.log({"gen_mem_usage_gbytes": gen_mem_usage, "disc_mem_usage_gbbytes" : disc_mem_usage, "train_ds_mem_usage_gbytes" : train_ds_mem_usage,

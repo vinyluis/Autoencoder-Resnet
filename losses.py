@@ -108,8 +108,9 @@ def loss_wgangp_discriminator(disc, disc_real_output, disc_generated_output, rea
     real_loss = tf.reduce_mean(disc_real_output)
     gp = gradient_penalty_conditional(disc, real_img, generated_img, target)
     total_disc_loss = total_disc_loss = -(real_loss - fake_loss) + lambda_gp * gp + (0.001 * tf.reduce_mean(disc_real_output**2))
-    return total_disc_loss, real_loss, fake_loss
+    return total_disc_loss, real_loss, fake_loss, gp
 
+@tf.function
 def gradient_penalty(discriminator, real_img, fake_img, training):
     """Calcula a penalidade de gradiente para a loss de wassertein-gp (WGAN-GP)."""
     # Get the Batch Size
@@ -137,6 +138,7 @@ def gradient_penalty(discriminator, real_img, fake_img, training):
     gp = tf.reduce_mean((norm - 1.0) ** 2)
     return gp
 
+@tf.function
 def gradient_penalty_conditional(disc, real_img, generated_img, target):
     """Calcula a penalidade de gradiente para a loss de wassertein-gp (WGAN-GP).
     Adaptada para o uso em discriminadores condicionais.

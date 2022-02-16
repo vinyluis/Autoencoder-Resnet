@@ -9,7 +9,6 @@ from datetime import timedelta
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
 import tensorflow as tf
-
 from tensorflow.keras import backend as K
 
 
@@ -125,6 +124,8 @@ def generate_fixed_images(fixed_train, fixed_val, generator, epoch, EPOCHS, save
         plt.close(fig_train)
         plt.close(fig_val)
 
+## Memória
+
 def print_used_memory(device = 'GPU:0'):
     mem_info = tf.config.experimental.get_memory_info(device)
 
@@ -138,8 +139,6 @@ def print_used_memory(device = 'GPU:0'):
     
     print(f"Uso de memória: Current = {mem_info_current_mbytes:,.2f} MB, Peak = {mem_info_peak_mbytes:,.2f} MB")
     return {"current_memory_mbytes" : mem_info_current_mbytes, "peak_memory_mbytes" : mem_info_peak_mbytes}
-
-## Memória
 
 def get_model_memory_usage(batch_size, model):
 
@@ -192,7 +191,6 @@ def get_full_dataset_memory_usage(num_imgs, image_size, image_channels, data_typ
 
     dataset_memory_size_gbytes = num_imgs * image_memory_size_gbytes
     return dataset_memory_size_gbytes
-    
 
 
 #%% FUNÇÕES DO DATASET
