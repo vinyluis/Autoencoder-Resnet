@@ -11,6 +11,7 @@ import tensorflow as tf
 L1: Não há treinamento adversário e o Gerador é treinado apenas com a Loss L1
 L2: Idem, com a loss L2
 '''
+@tf.function
 def loss_l1_generator(gen_output, target, lambda_l1):
     """Calcula a loss L1 (MAE - distância média absoluta pixel a pixel) entre a imagem gerada e o objetivo."""
     gan_loss = 0
@@ -18,6 +19,7 @@ def loss_l1_generator(gen_output, target, lambda_l1):
     total_gen_loss = lambda_l1 * l1_loss
     return total_gen_loss, gan_loss, l1_loss
 
+@tf.function
 def loss_l2_generator(gen_output, target, lambda_l2):
     """Calcula a loss L2 (RMSE - raiz da distância média quadrada pixel a pixel) entre a imagem gerada e o objetivo."""
     MSE = tf.keras.losses.MeanSquaredError()
@@ -35,6 +37,7 @@ uma matriz 30x30x1, em que cada "pixel" equivale a uma região da imagem, e o di
   dimensão preenchida com "1"s, e a L1_Loss é a diferença entre a imagem objetivo e a imagem gerada
 - A Loss do discriminador usa apenas a Loss de Gan, mas com uma matriz "0"s para a imagem do gerador (falsa) e uma de "1"s para a imagem real
 '''
+@tf.function
 def loss_patchgan_generator(disc_generated_output, gen_output, target, lambda_l1):
     """Calcula a loss de gerador usando BCE no framework Pix2Pix / PatchGAN.
 
@@ -52,6 +55,7 @@ def loss_patchgan_generator(disc_generated_output, gen_output, target, lambda_l1
     total_gen_loss = gan_loss + (lambda_l1 * l1_loss)
     return total_gen_loss, gan_loss, l1_loss
 
+@tf.function
 def loss_patchgan_discriminator(disc_real_output, disc_generated_output, lambda_disc):
     """Calcula a loss dos discriminadores usando BCE.
 
@@ -76,6 +80,7 @@ Como a WGAN é não-supervisionada, eu vou acrescentar no gerador também a L1 L
 e usar a WGAN como substituta da GAN Loss
 
 '''
+@tf.function
 def loss_wgan_generator(disc_generated_output, gen_output, target, lambda_l1):
     """Calcula a loss de wasserstein (WGAN) para o gerador."""
     # O output do discriminador é de tamanho BATCH_SIZE x 1, o valor esperado é a média
@@ -84,6 +89,7 @@ def loss_wgan_generator(disc_generated_output, gen_output, target, lambda_l1):
     total_gen_loss = gan_loss + (lambda_l1 * l1_loss)
     return total_gen_loss, gan_loss, l1_loss
 
+@tf.function
 def loss_wgan_discriminator(disc_real_output, disc_generated_output):
     """Calcula a loss de wasserstein (WGAN) para o discriminador."""
     # Maximizar E(D(x_real)) - E(D(x_fake)) é equivalente a minimizar -(E(D(x_real)) - E(D(x_fake))) ou E(D(x_fake)) -E(D(x_real))

@@ -4,36 +4,40 @@
 ## Created for the Master's degree dissertation
 ## Vinícius Trevisan 2020-2022
 
-### Imports
+### --- Imports
 import os
 import time
 from math import ceil
+import traceback
 
+### --- Weights & Biases
+
+import wandb
+wandb.init(project='autoencoders', entity='vinyluis', mode="disabled")
+# wandb.init(project='autoencoders', entity='vinyluis', mode="online")
+
+### --- Tensorflow
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
 import tensorflow as tf
 
-# Módulos próprios
-import losses, utils, metrics
-import networks as net
-import transferlearning as transfer
-
-#%% Weights & Biases
-
-import wandb
-# wandb.init(project='autoencoders', entity='vinyluis', mode="disabled")
-wandb.init(project='autoencoders', entity='vinyluis', mode="online")
-
-#%% Config Tensorflow
-
 # Verifica se a GPU está disponível:
 print("---- VERIFICA SE A GPU ESTÁ DISPONÍVEL:")
-print(tf.config.list_physical_devices('GPU'))
+physical_devices = tf.config.list_physical_devices('GPU')
+print(physical_devices)
 print("")
 
 # Verifica a versão do Tensorflow
 tf_version = tf. __version__
 print(f"Utilizando Tensorflow v {tf_version}")
 print("")
+
+# Habilita a alocação de memória dinâmica
+tf.config.experimental.set_memory_growth(physical_devices[0], True)
+
+### --- Módulos próprios
+import losses, utils, metrics
+import networks as net
+import transferlearning as transfer
 
 #%% HIPERPARÂMETROS E CONFIGURAÇÕES
 config = wandb.config # Salva os hiperparametros no Weights & Biases também
@@ -57,7 +61,7 @@ config.LAMBDA = 100 # Efeito da Loss L1. Default = 100.
 config.LAMBDA_DISC = 1 # Ajuste de escala da loss do dicriminador
 config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
 config.NUM_RESIDUAL_BLOCKS = 6 # Número de blocos residuais dos geradores residuais
-config.DISENTANGLEMENT = 'none' # 'none', 'normal', 'smooth'
+config.DISENTANGLEMENT = 'normal' # 'none', 'normal', 'smooth'
 # config.ADAM_BETA_1 e config.FIRST_EPOCH são definidos em código
 
 # Parâmetros de treinamento
@@ -101,7 +105,7 @@ SHUTDOWN_AFTER_FINISH = False # Controla se o PC será desligado quando o códig
 #%% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp = "R04D"
+config.exp = "R05D"
 
 if config.exp != "":
     print(f"Experimento {config.exp}")
@@ -657,8 +661,16 @@ else:
 #%% TREINAMENTO
 
 if config.FIRST_EPOCH <= config.EPOCHS:
-    fit(generator, disc, train_dataset, val_dataset, config.FIRST_EPOCH, config.EPOCHS, adversarial = config.ADVERSARIAL)
-
+    try:
+        fit(generator, disc, train_dataset, val_dataset, config.FIRST_EPOCH, config.EPOCHS, adversarial = config.ADVERSARIAL)
+    except Exception as e:
+        # Printa  o uso de memória
+        mem_usage = utils.print_used_memory()
+        wandb.log(mem_usage)
+        # Printa o traceback
+        traceback.print_exc()
+        # Levanta a exceção
+        raise BaseException("Erro durante o treinamento")
 
 #%% VALIDAÇÃO
 
