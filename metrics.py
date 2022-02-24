@@ -4,7 +4,6 @@ import numpy as np
 
 from scipy.linalg import sqrtm
 from sklearn.metrics import accuracy_score as accuracy
-from tensorflow.python.framework.tensor_shape import as_dimension
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
 import tensorflow as tf
@@ -187,13 +186,7 @@ def get_frechet_inception_distance(image1, image2):
 	ssdiff = np.sum((mu1 - mu2)**2.0)
 	# Calcula a raiz do produto entre as matrizes de covariância
 	sigma_dot = sigma1.dot(sigma2)
-	# print(f"sigma_dot: {sigma_dot}")
-	# print(f"sigma_dot shape: {sigma_dot.shape}")
-	# print(f"type sigma dot: {type(sigma_dot)}")
-	# print(f"type sigma dot[0,0]: {type(sigma_dot[0,0])}")
 	covmean = sqrtm(sigma_dot)
-	# print(f"covmean: {covmean}")
-	
 	# Corrige números imaginários, se necessário
 	if np.iscomplexobj(covmean):
 		covmean = covmean.real
@@ -282,7 +275,7 @@ def evaluate_accuracy(generator, discriminator, test_ds, y_real, y_pred, window 
         return y_real, y_pred, acc
 
 
-#%% VALIDATION
+#%% TESTE
 
 if __name__  == "__main__":
 

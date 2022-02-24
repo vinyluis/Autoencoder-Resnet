@@ -13,8 +13,8 @@ import traceback
 ### --- Weights & Biases
 
 import wandb
-wandb.init(project='autoencoders', entity='vinyluis', mode="disabled")
-# wandb.init(project='autoencoders', entity='vinyluis', mode="online")
+# wandb.init(project='autoencoders', entity='vinyluis', mode="disabled")
+wandb.init(project='autoencoders', entity='vinyluis', mode="online")
 
 ### --- Tensorflow
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
@@ -56,16 +56,16 @@ config.DATASET = "CelebaHQ" # "CelebaHQ" ou "InsetosFlickr"
 config.USE_RANDOM_JITTER = False
 
 # Parâmetros de rede
-config.NORM_TYPE = "instancenorm" # "batchnorm", "instancenorm", "pixelnorm"
+config.NORM_TYPE = "batchnorm" # "batchnorm", "instancenorm", "pixelnorm"
 config.LAMBDA = 100 # Efeito da Loss L1. Default = 100.
 config.LAMBDA_DISC = 1 # Ajuste de escala da loss do dicriminador
 config.LAMBDA_GP = 10 # Intensidade do Gradient Penalty da WGAN-GP
 config.NUM_RESIDUAL_BLOCKS = 6 # Número de blocos residuais dos geradores residuais
-config.DISENTANGLEMENT = 'normal' # 'none', 'normal', 'smooth'
+config.DISENTANGLEMENT = 'smooth' # 'none', 'normal', 'smooth'
 # config.ADAM_BETA_1 e config.FIRST_EPOCH são definidos em código
 
 # Parâmetros de treinamento
-config.BATCH_SIZE = 8
+config.BATCH_SIZE = 45
 config.BUFFER_SIZE = 100
 config.LEARNING_RATE_G = 1e-5
 config.LEARNING_RATE_D = 1e-5
@@ -105,31 +105,30 @@ SHUTDOWN_AFTER_FINISH = False # Controla se o PC será desligado quando o códig
 #%% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp = "R05D"
+config.exp_group = "R08"
+config.exp = "R08B"
 
 if config.exp != "":
     print(f"Experimento {config.exp}")
 
 # Modelo do gerador. Possíveis = 'pix2pix', 'unet', 'residual', 'residual_vetor', 
 #                                'full_residual', 'simple_decoder', 'transfer'
-config.gen_model = 'simple_decoder'
+config.gen_model = 'residual_vetor'
 
 # Modelo do discriminador. Possíveis = 'patchgan', 'progan', 'progan_adapted'
-config.disc_model = 'progan'
+config.disc_model = 'patchgan'
 
 # Tipo de loss. Possíveis = 'patchganloss', 'wgan', 'wgan-gp', 'l1', 'l2'
-config.loss_type = 'wgan-gp'
+config.loss_type = 'l1'
 
 # Faz a configuração do transfer learning, se for selecionado
 if config.gen_model == 'transfer':
-    config.transfer_generator_path = base_root + "Experimentos/EXP11A_gen_resnet_disc_stylegan/model/"
-    config.transfer_generator_filename = "ae_generator.h5"
-    config.transfer_middle_model = 'simple'
+    config.transfer_generator_path = base_root + "Experimentos/EXP_R04A_gen_residual_disc_progan/model/"
+    config.transfer_generator_filename = "generator.h5"
+    config.transfer_upsample_type = 'simple' # 'none', 'simple' ou 'conv'
     config.transfer_trainable = False
-    config.transfer_encoder_last_layer = 'leaky_re_lu_20'
+    config.transfer_encoder_last_layer = 'leaky_re_lu_14'
     config.transfer_decoder_first_layer = 'conv2d_transpose'
-    config.transfer_disentangle = True
-    config.transfer_smooth_vector = True
 
 # Acerta o flag ADVERSARIAL que indica se o treinamento é adversário (GAN) ou não
 if config.loss_type == 'l1' or config.loss_type == 'l2':
@@ -172,8 +171,11 @@ experiment_root = base_root + 'Experimentos/'
 experiment_folder = experiment_root + 'EXP_' + config.exp + '_'
 experiment_folder += 'gen_'
 experiment_folder += config.gen_model
-experiment_folder += '_disc_'
-experiment_folder += config.disc_model
+if config.ADVERSARIAL:
+    experiment_folder += '_disc_'
+    experiment_folder += config.disc_model
+else:
+    experiment_folder += '_notadversarial'
 experiment_folder += '/'
 
 ### Pastas dos resultados
@@ -505,7 +507,7 @@ def fit(generator, discriminator, train_ds, val_ds, first_epoch, epochs, adversa
             # Step de treinamento
             target = input_image
 
-            if adversarial == True:
+            if adversarial:
                 # Realiza o step de treino adversário
                 losses_train = train_step(generator, discriminator, input_image, target)
                 # Cálculo da acurácia com imagens de validação
@@ -525,7 +527,11 @@ def fit(generator, discriminator, train_ds, val_ds, first_epoch, epochs, adversa
             if (n % config.EVAL_ITERATIONS) == 0 or n == 1 or n == progbar_iterations:
                 for example_input in val_dataset.unbatch().batch(config.BATCH_SIZE).take(1):
                     # Calcula as losses
-                    losses_val = evaluate_validation_losses(generator, discriminator, example_input, example_input)
+                    if adversarial:
+                        losses_val = evaluate_validation_losses(generator, discriminator, example_input, example_input)
+                    else:
+                        losses_val = evaluate_validation_losses_not_adversarial(generator, example_input, example_input)
+
                     # Loga as losses de val no weights and biases
                     wandb.log(utils.dict_tensor_to_numpy(losses_val)) 
         
@@ -587,8 +593,8 @@ elif config.gen_model == 'simple_decoder':
     generator = net.simple_decoder_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, disentanglement = config.DISENTANGLEMENT, num_residual_blocks=config.NUM_RESIDUAL_BLOCKS)
 elif config.gen_model == 'transfer':
     generator = transfer.transfer_model(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, config.transfer_generator_path, config.transfer_generator_filename, 
-    config.transfer_middle_model, config.transfer_encoder_last_layer, config.transfer_decoder_first_layer, config.transfer_trainable,
-    config.transfer_disentangle, config.transfer_smooth_vector)
+    config.transfer_upsample_type, config.transfer_encoder_last_layer, config.transfer_decoder_first_layer, config.transfer_trainable,
+    config.DISENTANGLEMENT)
 else:
     raise utils.GeneratorError(config.gen_model)
 
@@ -611,11 +617,16 @@ if config.ADVERSARIAL:
     discriminator_optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE_D, beta_1=config.ADAM_BETA_1)
 
 #%% CONSUMO DE MEMÓRIA
+mem_dict = {}
+
 print("Uso de memória dos modelos:")
 gen_mem_usage = utils.get_model_memory_usage(config.BATCH_SIZE, generator)
-disc_mem_usage = utils.get_model_memory_usage(config.BATCH_SIZE, disc)
+mem_dict['gen_mem_usage_gbytes'] = gen_mem_usage
 print(f"Gerador         = {gen_mem_usage:,.2f} GB")
-print(f"Discriminador   = {disc_mem_usage:,.2f} GB")
+if config.ADVERSARIAL:
+    disc_mem_usage = utils.get_model_memory_usage(config.BATCH_SIZE, disc)
+    print(f"Discriminador   = {disc_mem_usage:,.2f} GB")
+    mem_dict['disc_mem_usage_gbbytes'] = disc_mem_usage
 
 print("Uso de memória dos datasets:")
 train_ds_mem_usage = utils.get_full_dataset_memory_usage(config.TRAIN_SIZE, config.IMG_SIZE, config.OUTPUT_CHANNELS, data_type = train_dataset.element_spec.dtype)
@@ -624,10 +635,12 @@ val_ds_mem_usage = utils.get_full_dataset_memory_usage(config.VAL_SIZE, config.I
 print(f"Train dataset   = {train_ds_mem_usage:,.2f} GB")
 print(f"Test dataset    = {test_ds_mem_usage:,.2f} GB")
 print(f"Val dataset     = {val_ds_mem_usage:,.2f} GB")
+mem_dict['train_ds_mem_usage_gbytes'] = train_ds_mem_usage
+mem_dict['test_ds_mem_usage_gbytes'] = test_ds_mem_usage
+mem_dict['val_ds_mem_usage_gbytes'] = val_ds_mem_usage
 print("")
 
-wandb.log({"gen_mem_usage_gbytes": gen_mem_usage, "disc_mem_usage_gbbytes" : disc_mem_usage, "train_ds_mem_usage_gbytes" : train_ds_mem_usage,
-           "test_ds_mem_usage_gbytes" : test_ds_mem_usage, "val_ds_mem_usage_gbytes" : val_ds_mem_usage})
+wandb.log(mem_dict)
 
 #%% CHECKPOINTS
 

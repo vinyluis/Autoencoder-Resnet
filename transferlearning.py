@@ -9,7 +9,6 @@ https://stackoverflow.com/questions/53907681/how-to-fine-tune-a-functional-model
 
 ### Imports
 import os
-from matplotlib import pyplot as plt
 
 ### Tensorflow
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  
@@ -18,19 +17,25 @@ import tensorflow_addons as tfa
 from tensorflow.keras.models import Model, load_model
 
 ### Módulos próprios
-import utils
-
-# norm_layer = tf.keras.layers.BatchNormalization
-norm_layer = tfa.layers.InstanceNormalization
+import utils, networks as net
 
 # Modo de inicialização dos pesos
 initializer = tf.random_normal_initializer(0., 0.02)
 
-
 #%% BLOCOS
 
-def upsample_block(x, filters, name_prefix = None, name_suffix = None):
+def upsample_block(x, filters, name_prefix = None, name_suffix = None, norm_type = 'instancenorm'):
     # Reconstrução da imagem, baseada na Pix2Pix / CycleGAN
+
+    # Define o tipo de normalização usada
+    if norm_type == 'batchnorm':
+        norm_layer = tf.keras.layers.BatchNormalization
+    elif norm_type == 'instancenorm':
+        norm_layer = tfa.layers.InstanceNormalization
+    elif norm_type == 'pixelnorm':
+        norm_layer = net.PixelNormalization
+    else:
+        raise BaseException("Tipo de normalização desconhecida")
 
     if name_prefix == None or name_suffix == None:
         x = tf.keras.layers.Conv2DTranspose(filters = filters, kernel_size = (3, 3) , strides = (2, 2), padding = "same", 
@@ -58,8 +63,18 @@ def simple_upsample(x, scale = 2, interpolation = 'bilinear', name_prefix = None
 
     return x
 
-def simple_upsample_block(x, filters, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear', name_prefix = None, name_suffix = None):
+def simple_upsample_block(x, filters, scale = 2, kernel_size = (3, 3), interpolation = 'bilinear', name_prefix = None, name_suffix = None, norm_type = 'instancenorm'):
     
+    # Define o tipo de normalização usada
+    if norm_type == 'batchnorm':
+        norm_layer = tf.keras.layers.BatchNormalization
+    elif norm_type == 'instancenorm':
+        norm_layer = tfa.layers.InstanceNormalization
+    elif norm_type == 'pixelnorm':
+        norm_layer = net.PixelNormalization
+    else:
+        raise BaseException("Tipo de normalização desconhecida")
+
     if name_prefix == None or name_suffix == None:
 
         x = simple_upsample(x, scale = scale, interpolation = interpolation) 
@@ -128,8 +143,8 @@ def get_decoder(generator, encoder_last_layer, decoder_first_layer, trainable):
     decoder.trainable = trainable
     return decoder
 
-def transfer_model(IMG_SIZE, OUTPUT_CHANNELS, generator_path, generator_filename, middle_model, encoder_last_layer, decoder_first_layer, transfer_trainable,
-                    disentangle = False, smooth_vector = False):
+def transfer_model(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE, generator_path, generator_filename, upsample_type, encoder_last_layer, decoder_first_layer, transfer_trainable,
+                    disentanglement = None):
     '''
     Carrega o modelo, separa em encoder e decoder, insere um modelo no meio e retorna o modelo final
     '''
@@ -141,8 +156,8 @@ def transfer_model(IMG_SIZE, OUTPUT_CHANNELS, generator_path, generator_filename
     # Cria o modelo final
     inputlayer = tf.keras.layers.Input(shape=(IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS), name = 'transfer_model_input')
     x = encoder(inputlayer)
-    if middle_model != None:
-        x = include_vector_resnet(IMG_SIZE, middle_model, disentangle, smooth_vector)(x)
+    if upsample_type != None:
+        x = include_vector(IMG_SIZE, NORM_TYPE, upsample_type, disentanglement)(x)
     x = decoder(x)
     transfer_model = Model(inputs = inputlayer, outputs = x)
 
@@ -151,20 +166,32 @@ def transfer_model(IMG_SIZE, OUTPUT_CHANNELS, generator_path, generator_filename
 
 #%% MODELOS DE "MEIO"
 
-def include_vector_resnet(IMG_SIZE, upsample, disentangle = False, smooth = False, vecsize = 512):
+def include_vector(IMG_SIZE, NORM_TYPE, upsample_type, disentanglement):
+    """"""
     # Apenas cria a redução para o vetor latente e depois retorna para a dimensão (31, 31, 256)
     # disentangle = True -> Inclui camadas de disentanglement (de z para w, StyleGAN)
     # smooth = True -> Faz a redução de dimensão das camadas 
     # upsample = 'conv' -> Usa convoluções para fazer o upsample pelo bloco "net.upsample"
     #          = 'simple' -> Usa o bloco "net.simple_upsample_block"
 
-    if not (upsample == 'conv' or upsample == 'simple'):
-        raise utils.TransferUpsampleError(upsample)
+    # Define o tipo de normalização usada
+    if NORM_TYPE == 'batchnorm':
+        norm_layer = tf.keras.layers.BatchNormalization
+    elif NORM_TYPE == 'instancenorm':
+        norm_layer = tfa.layers.InstanceNormalization
+    elif NORM_TYPE == 'pixelnorm':
+        norm_layer = net.PixelNormalization
+    else:
+        raise BaseException("Tipo de normalização desconhecida")
+
+    if not (upsample_type == 'conv' or upsample_type == 'simple'):
+        raise utils.TransferUpsampleError(upsample_type)
 
     inputlayer = tf.keras.layers.Input(shape=(31, 31, 256))
     x = inputlayer
 
     # Criação do vetor latente 
+    vecsize = 512
     x = tf.keras.layers.Conv2D(filters = 1, kernel_size = (3, 3) , strides = (1, 1), padding = "valid", kernel_initializer=initializer, use_bias = True, name = 'middle_conv1')(x)
     x = norm_layer(name = 'middle_norm1')(x)
     x = tf.keras.layers.LeakyReLU(alpha=0.2, name = 'middle_leakyrelu1')(x)
@@ -174,45 +201,49 @@ def include_vector_resnet(IMG_SIZE, upsample, disentangle = False, smooth = Fals
     # Se IMG_SIZE = 128, a saída terá 841 elementos
     x = tf.keras.layers.Flatten(name = 'middle_flatten')(x)
 
-    if smooth:
-        # Redução gradual até vecsize
+    if disentanglement == 'smooth':
+        # Redução até vecsize (parte do smooth disentanglement)
         if IMG_SIZE == 256:
-            x = tf.keras.layers.Dense(units = 3072, kernel_initializer = initializer, name = 'middle_dense_s1')(x) #2048 + 512
-            x = tf.keras.layers.Dense(units = 2048, kernel_initializer = initializer, name = 'middle_dense_s2')(x)
-            x = tf.keras.layers.Dense(units = 1024, kernel_initializer = initializer, name = 'middle_dense_s3')(x)
-            x = tf.keras.layers.Dense(units = 512, kernel_initializer = initializer, name = 'middle_dense_s4')(x)
+            x = tf.keras.layers.Dense(units = 3072, kernel_initializer = initializer)(x) #2048 + 512
+            x = tf.keras.layers.Dense(units = 2048, kernel_initializer = initializer)(x)
+            x = tf.keras.layers.Dense(units = 1024, kernel_initializer = initializer)(x)
 
         elif IMG_SIZE == 128:
-            x = tf.keras.layers.Dense(units = 768, kernel_initializer = initializer, name = 'middle_dense_s1')(x) #512 + 256
-            x = tf.keras.layers.Dense(units = 512, kernel_initializer = initializer, name = 'middle_dense_s2')(x)
+            x = tf.keras.layers.Dense(units = 768, kernel_initializer = initializer)(x) #512 + 256
 
-    # Vetor latente (z)
-    x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer, name = 'middle_dense_z')(x)
-    
-    if disentangle:
-        # Disentanglement (de z para w, StyleGAN)
+        # Disentanglement (de z para w, baseado na StyleGAN)
+        disentanglement_steps = 5 if IMG_SIZE == 256 else 7
+        for i in range(disentanglement_steps):
+            x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
+
+    elif disentanglement == 'normal':
+
+        # Disentanglement (de z para w, baseado na StyleGAN)
         for i in range(8):
-            layer_name = 'middle_dense_w'+str(i+1)
-            x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer, name = layer_name)(x)
+            x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
+
+    elif disentanglement == None or disentanglement == 'none':
+
+        x = tf.keras.layers.Dense(units = vecsize, kernel_initializer=initializer)(x)
     
     # Transforma novamente num tensor de terceira ordem
     x = tf.expand_dims(x, axis = 1, name = 'middle_expand_dims1')
     x = tf.expand_dims(x, axis = 1, name = 'middle_expand_dims2')
     
     # Upsamples
-    if upsample == 'conv':
-        x = upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '1')
-        x = upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '2')
-        x = upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '3')
-        x = upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '4')
-        x = upsample_block(x, 256, name_prefix = 'middle_', name_suffix = '5')
+    if upsample_type == 'conv':
+        x = upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '1', norm_type = NORM_TYPE)
+        x = upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '2', norm_type = NORM_TYPE)
+        x = upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '3', norm_type = NORM_TYPE)
+        x = upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '4', norm_type = NORM_TYPE)
+        x = upsample_block(x, 256, name_prefix = 'middle_', name_suffix = '5', norm_type = NORM_TYPE)
 
-    if upsample == 'simple':
-        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '1')
-        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '2')
-        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '3')
-        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '4')
-        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '5')
+    if upsample_type == 'simple':
+        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '1', norm_type = NORM_TYPE)
+        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '2', norm_type = NORM_TYPE)
+        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '3', norm_type = NORM_TYPE)
+        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '4', norm_type = NORM_TYPE)
+        x = simple_upsample_block(x, 512, name_prefix = 'middle_', name_suffix = '5', norm_type = NORM_TYPE)
 
     # Finaliza para deixar com  a dimensão correta (31, 31, 256)
     x = tf.keras.layers.Conv2D(256, kernel_size = 2, strides = 1, padding = 'valid', name = 'middle_conv2')(x)
@@ -223,3 +254,31 @@ def include_vector_resnet(IMG_SIZE, upsample, disentangle = False, smooth = Fals
     model = Model(inputs = inputlayer, outputs = x, name = "bottleneckmodel")
 
     return model
+
+#%% TESTE
+
+if __name__  == "__main__":
+
+    base_root = ""
+
+    # Faz a configuração do transfer learning, se for selecionado
+    transfer_generator_path = base_root + "Experimentos/EXP_R04A_gen_residual_disc_progan/model/"
+    transfer_generator_filename = "generator.h5"
+    transfer_upsample_type = 'simple' # 'none', 'simple' ou 'conv'
+    transfer_trainable = False
+    transfer_encoder_last_layer = 'leaky_re_lu_14'
+    transfer_decoder_first_layer = 'conv2d_transpose'
+
+    # Outras configurações e hiperparâmetros
+    IMG_SIZE = 128
+    OUTPUT_CHANNELS = 3
+    NORM_TYPE = 'batchnorm'
+    DISENTANGLEMENT = 'smooth'
+
+    # Cria o gerador
+    generator = transfer_model(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE, transfer_generator_path, transfer_generator_filename, 
+    transfer_upsample_type, transfer_encoder_last_layer, transfer_decoder_first_layer, transfer_trainable,
+    DISENTANGLEMENT)
+
+    # Salva o gerador para ver se está certo
+    # generator.save("transfer_generator.h5")
