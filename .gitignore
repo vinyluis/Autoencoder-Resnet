@@ -7,3 +7,4 @@ __pycache__
 wandb
 *.h5
 x_Antigos
+.vscode

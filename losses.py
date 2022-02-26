@@ -1,34 +1,38 @@
-## Definition of the losses for the GANs used on this project
+""" Definição das losses usadas no projeto """
 
 import os
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
 import tensorflow as tf
 
-#%% DEFINIÇÃO DAS LOSSES
+# %% DEFINIÇÃO DAS LOSSES
 
 '''
 L1: Não há treinamento adversário e o Gerador é treinado apenas com a Loss L1
 L2: Idem, com a loss L2
 '''
+
+
 @tf.function
 def loss_l1_generator(gen_output, target, lambda_l1):
     """Calcula a loss L1 (MAE - distância média absoluta pixel a pixel) entre a imagem gerada e o objetivo."""
     gan_loss = 0
-    l1_loss = tf.reduce_mean(tf.abs(target - gen_output)) # mean absolute error
+    l1_loss = tf.reduce_mean(tf.abs(target - gen_output))  # mean absolute error
     total_gen_loss = lambda_l1 * l1_loss
     return total_gen_loss, gan_loss, l1_loss
+
 
 @tf.function
 def loss_l2_generator(gen_output, target, lambda_l2):
     """Calcula a loss L2 (RMSE - raiz da distância média quadrada pixel a pixel) entre a imagem gerada e o objetivo."""
     MSE = tf.keras.losses.MeanSquaredError()
     gan_loss = 0
-    l2_loss = MSE(target, gen_output) # mean squared error
+    l2_loss = MSE(target, gen_output)  # mean squared error
     # Usando a loss desse jeito, valores entre 0 e 1 serão subestimados. Deve-se tirar a raiz do MSE
-    l2_loss = tf.sqrt(l2_loss) # RMSE
+    l2_loss = tf.sqrt(l2_loss)  # RMSE
     total_gen_loss = lambda_l2 * l2_loss
     return total_gen_loss, gan_loss, l2_loss
+
 
 '''
 PatchGAN: Em vez de o discriminador usar uma única predição (0 = falsa, 1 = real), o discriminador da PatchGAN (Pix2Pix e CycleGAN) usa
@@ -37,6 +41,8 @@ uma matriz 30x30x1, em que cada "pixel" equivale a uma região da imagem, e o di
   dimensão preenchida com "1"s, e a L1_Loss é a diferença entre a imagem objetivo e a imagem gerada
 - A Loss do discriminador usa apenas a Loss de Gan, mas com uma matriz "0"s para a imagem do gerador (falsa) e uma de "1"s para a imagem real
 '''
+
+
 @tf.function
 def loss_patchgan_generator(disc_generated_output, gen_output, target, lambda_l1):
     """Calcula a loss de gerador usando BCE no framework Pix2Pix / PatchGAN.
@@ -51,9 +57,10 @@ def loss_patchgan_generator(disc_generated_output, gen_output, target, lambda_l1
     # Lg = GANLoss + LAMBDA * L1_Loss
     BCE = tf.keras.losses.BinaryCrossentropy(from_logits=True)
     gan_loss = BCE(tf.ones_like(disc_generated_output), disc_generated_output)
-    l1_loss = tf.reduce_mean(tf.abs(target - gen_output)) # mean absolute error
+    l1_loss = tf.reduce_mean(tf.abs(target - gen_output))  # mean absolute error
     total_gen_loss = gan_loss + (lambda_l1 * l1_loss)
     return total_gen_loss, gan_loss, l1_loss
+
 
 @tf.function
 def loss_patchgan_discriminator(disc_real_output, disc_generated_output, lambda_disc):
@@ -70,6 +77,7 @@ def loss_patchgan_discriminator(disc_real_output, disc_generated_output, lambda_
     total_disc_loss = lambda_disc * (real_loss + fake_loss)
     return total_disc_loss, real_loss, fake_loss
 
+
 '''
 Wasserstein GAN (WGAN): A PatchGAN e as GANs clássicas usam a BCE como medida de distância entre a distribuição real e a inferida pelo gerador,
 e esse método é na prática a divergência KL. A WGAN usa a distância de Wasserstein, que é mais estável, então evita o mode collapse.
@@ -80,6 +88,8 @@ Como a WGAN é não-supervisionada, eu vou acrescentar no gerador também a L1 L
 e usar a WGAN como substituta da GAN Loss
 
 '''
+
+
 @tf.function
 def loss_wgan_generator(disc_generated_output, gen_output, target, lambda_l1):
     """Calcula a loss de wasserstein (WGAN) para o gerador."""
@@ -88,6 +98,7 @@ def loss_wgan_generator(disc_generated_output, gen_output, target, lambda_l1):
     l1_loss = tf.reduce_mean(tf.abs(target - gen_output))
     total_gen_loss = gan_loss + (lambda_l1 * l1_loss)
     return total_gen_loss, gan_loss, l1_loss
+
 
 @tf.function
 def loss_wgan_discriminator(disc_real_output, disc_generated_output):
@@ -98,15 +109,19 @@ def loss_wgan_discriminator(disc_real_output, disc_generated_output):
     total_disc_loss = -(real_loss - fake_loss)
     return total_disc_loss, real_loss, fake_loss
 
+
 '''
 Wasserstein GAN - Gradient Penalty (WGAN-GP): A WGAN tem uma forma muito bruta de assegurar a continuidade de Lipschitz, então
 os autores criaram o conceito de Gradient Penalty para manter essa condição de uma forma mais suave.
 - O gerador tem a MESMA loss da WGAN
 - O discriminador, em vez de ter seus pesos limitados pelo clipping, ganha uma penalidade de gradiente que deve ser calculada
 '''
+
+
 def loss_wgangp_generator(disc_generated_output, gen_output, target, lambda_l1):
     """Calcula a loss de wasserstein com gradient-penalty (WGAN-GP) para o gerador."""
     return loss_wgan_generator(disc_generated_output, gen_output, target, lambda_l1)
+
 
 def loss_wgangp_discriminator(disc, disc_real_output, disc_generated_output, real_img, generated_img, target, lambda_gp):
     """Calcula a loss de wasserstein com gradient-penalty (WGAN-GP) para o discriminador."""
@@ -115,6 +130,7 @@ def loss_wgangp_discriminator(disc, disc_real_output, disc_generated_output, rea
     gp = gradient_penalty_conditional(disc, real_img, generated_img, target)
     total_disc_loss = total_disc_loss = -(real_loss - fake_loss) + lambda_gp * gp + (0.001 * tf.reduce_mean(disc_real_output**2))
     return total_disc_loss, real_loss, fake_loss, gp
+
 
 @tf.function
 def gradient_penalty(discriminator, real_img, fake_img, training):
@@ -133,7 +149,7 @@ def gradient_penalty(discriminator, real_img, fake_img, training):
 
         # 1. Get the discriminator output for this interpolated image.
         if training == 'direct':
-            pred = discriminator(interpolated, training=True) # O discriminador usa duas imagens como entrada
+            pred = discriminator(interpolated, training=True)  # O discriminador usa duas imagens como entrada
         elif training == 'progressive':
             pred = discriminator(interpolated)
 
@@ -143,6 +159,7 @@ def gradient_penalty(discriminator, real_img, fake_img, training):
     norm = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=[1, 2, 3]))
     gp = tf.reduce_mean((norm - 1.0) ** 2)
     return gp
+
 
 @tf.function
 def gradient_penalty_conditional(disc, real_img, generated_img, target):
@@ -157,12 +174,12 @@ def gradient_penalty_conditional(disc, real_img, generated_img, target):
 
     # Calcula a imagem interpolada
     interpolated = real_img * gamma + generated_img * (1 - gamma)
-    
+
     with tf.GradientTape() as gp_tape:
         gp_tape.watch(interpolated)
-        
+
         # 1. Get the discriminator output for this interpolated image.
-        pred = disc([interpolated, target], training=True) # O discriminador usa duas imagens como entrada
+        pred = disc([interpolated, target], training=True)  # O discriminador usa duas imagens como entrada
 
     # 2. Calculate the gradients w.r.t to this interpolated image.
     grads = gp_tape.gradient(pred, [interpolated])[0]
