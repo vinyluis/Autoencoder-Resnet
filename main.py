@@ -12,11 +12,26 @@ import sys
 import time
 from math import ceil
 import traceback
-import wandb
+
+# --- Tensorflow
 
 # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import tensorflow as tf
+
+# Verifica se a GPU está disponível:
+print("---- VERIFICA SE A GPU ESTÁ DISPONÍVEL:")
+physical_devices = tf.config.list_physical_devices('GPU')
+print(physical_devices)
+print("")
+
+# Habilita a alocação de memória dinâmica
+tf.config.experimental.set_memory_growth(physical_devices[0], True)
+
+# Verifica a versão do Tensorflow
+tf_version = tf. __version__
+print(f"Utilizando Tensorflow v {tf_version}")
+print("")
 
 # --- Módulos próprios
 import losses
@@ -26,25 +41,10 @@ import networks as net
 import transferlearning as transfer
 
 # --- Weights & Biases
+import wandb
 
 # wandb.init(project='autoencoders', entity='vinyluis', mode="disabled")
 wandb.init(project='autoencoders', entity='vinyluis', mode="online")
-
-# --- Tensorflow
-
-# Verifica se a GPU está disponível:
-print("---- VERIFICA SE A GPU ESTÁ DISPONÍVEL:")
-physical_devices = tf.config.list_physical_devices('GPU')
-print(physical_devices)
-print("")
-
-# Verifica a versão do Tensorflow
-tf_version = tf. __version__
-print(f"Utilizando Tensorflow v {tf_version}")
-print("")
-
-# Habilita a alocação de memória dinâmica
-tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 # %% HIPERPARÂMETROS E CONFIGURAÇÕES
 config = wandb.config  # Salva os hiperparametros no Weights & Biases também
@@ -62,12 +62,12 @@ base_root = ""
 config.IMG_SIZE = 128
 config.OUTPUT_CHANNELS = 3
 config.USE_CACHE = True
-config.DATASET = "CelebaHQ"  # "CelebaHQ" ou "InsetosFlickr"
+config.DATASET = "CelebaHQ"  # "CelebaHQ" ou "InsetosFlickr" ou "CelebaHQ_Small"
 config.USE_RANDOM_JITTER = False
 
 # Parâmetros de rede
-config.NORM_TYPE = "batchnorm"  # "batchnorm", "instancenorm", "pixelnorm"
-config.LAMBDA = 100  # Efeito da Loss L1. Default = 100.
+config.NORM_TYPE = "instancenorm"  # "batchnorm", "instancenorm", "pixelnorm"
+config.LAMBDA = 900  # Efeito da Loss L1. Default = 100.
 config.LAMBDA_DISC = 1  # Ajuste de escala da loss do dicriminador
 config.LAMBDA_GP = 10  # Intensidade do Gradient Penalty da WGAN-GP
 config.NUM_RESIDUAL_BLOCKS = 6  # Número de blocos residuais dos geradores residuais
@@ -75,11 +75,11 @@ config.DISENTANGLEMENT = 'smooth'  # 'none', 'normal', 'smooth'
 # config.ADAM_BETA_1 e config.FIRST_EPOCH são definidos em código
 
 # Parâmetros de treinamento
-config.BATCH_SIZE = 10
+config.BATCH_SIZE = 6
 config.BUFFER_SIZE = 100
 config.LEARNING_RATE_G = 1e-5
-config.LEARNING_RATE_D = 1e-6
-config.EPOCHS = 10
+config.LEARNING_RATE_D = 1e-5
+config.EPOCHS = 25
 
 # Parâmetros das métricas
 config.EVALUATE_IS = True
@@ -99,7 +99,7 @@ config.NUM_VAL_PRINTS = 10  # Controla quantas imagens de validação serão fei
 
 # Configurações de teste
 config.TEST = True  # Teste do modelo
-config.NUM_TEST_PRINTS = 500  # Controla quantas imagens de teste serão feitas. Com -1 plota todo o dataset de teste
+config.NUM_TEST_PRINTS = -1  # Controla quantas imagens de teste serão feitas. Com -1 plota todo o dataset de teste
 
 # Configurações de checkpoint
 config.SAVE_CHECKPOINT = True
@@ -115,15 +115,15 @@ SHUTDOWN_AFTER_FINISH = False  # Controla se o PC será desligado quando o códi
 # %% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp_group = "R09"
-config.exp = "R09A"
+config.exp_group = "R11"
+config.exp = "R11A"
 
 if config.exp != "":
     print(f"Experimento {config.exp}")
 
 # Modelo do gerador. Possíveis = 'pix2pix', 'unet', 'residual', 'residual_vetor',
 #                                'full_residual', 'simple_decoder', 'transfer'
-config.gen_model = 'residual'
+config.gen_model = 'full_residual'
 
 # Modelo do discriminador. Possíveis = 'patchgan', 'progan', 'progan_adapted'
 config.disc_model = 'progan'
@@ -136,7 +136,7 @@ if config.gen_model == 'transfer':
     config.transfer_generator_path = base_root + "Experimentos/EXP_R04A_gen_residual_disc_progan/model/"
     config.transfer_generator_filename = "generator.h5"
     config.transfer_upsample_type = 'conv'  # 'none', 'simple' ou 'conv'
-    config.transfer_trainable = False
+    config.transfer_trainable = True
     config.transfer_encoder_last_layer = 'leaky_re_lu_14'
     config.transfer_decoder_first_layer = 'conv2d_transpose'
 
@@ -226,6 +226,10 @@ if config.DATASET == 'CelebaHQ':
     dataset_folder = dataset_root + 'celeba_hq/'
     dataset_filter_string = '*/*/*.jpg'
 
+elif config.DATASET == 'CelebaHQ_Small':
+    dataset_folder = dataset_root + 'celeba_hq_really_small/'
+    dataset_filter_string = '*/*/*.jpg'
+
 elif config.DATASET == 'InsetosFlickr':
     dataset_folder = dataset_root + 'flickr_internetarchivebookimages/'
     dataset_filter_string = '*/*.jpg'
@@ -284,9 +288,10 @@ do dataset e o valor em EVALUATE_PERCENT_OF_DATASET
 # Configuração dos batches sizes
 if config.DATASET == 'CelebaHQ':
     config.METRIC_BATCH_SIZE = 32
-
 elif config.DATASET == 'InsetosFlickr':
     config.METRIC_BATCH_SIZE = 5  # Não há imagens o suficiente para fazer um batch size muito grande
+elif config.DATASET == 'CelebaHQ_Small':
+    config.METRIC_BATCH_SIZE = 16  # Não há imagens o suficiente para fazer um batch size muito grande
 else:
     config.METRIC_BATCH_SIZE = 16
 
@@ -425,15 +430,15 @@ def evaluate_validation_losses(generator, discriminator, input_image, target):
 
     # Cria um dicionário das losses
     loss_dict = {
-        'gen_total_loss': gen_loss,
-        'gen_gan_loss': gen_gan_loss,
-        'gen_l1_loss': gen_l1_loss,
-        'disc_total_loss': disc_loss,
-        'disc_real_loss': disc_real_loss,
-        'disc_fake_loss': disc_fake_loss,
+        'gen_total_loss_val': gen_loss,
+        'gen_gan_loss_val': gen_gan_loss,
+        'gen_l1_loss_val': gen_l1_loss,
+        'disc_total_loss_val': disc_loss,
+        'disc_real_loss_val': disc_real_loss,
+        'disc_fake_loss_val': disc_fake_loss,
     }
     if config.loss_type == 'wgan-gp':
-        loss_dict['gp'] = gp
+        loss_dict['gp_val'] = gp
 
     return loss_dict
 
@@ -462,8 +467,8 @@ def evaluate_validation_losses_not_adversarial(generator, input_image, target):
 
     # Cria um dicionário das losses
     loss_dict = {
-        'gen_total_loss': gen_loss,
-        'gen_l1_loss': gen_l1_loss
+        'gen_total_loss_val': gen_loss,
+        'gen_l1_loss_val': gen_l1_loss
     }
 
     return loss_dict
