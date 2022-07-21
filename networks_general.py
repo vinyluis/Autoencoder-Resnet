@@ -255,6 +255,30 @@ def residual_downsample_bottleneck_block(input_tensor, filters, norm_type='insta
     return x
 
 
+def residual_disc_block(input_tensor, filters, constraint):
+
+    '''
+    Cria um bloco resnet baseado na Resnet34, sem normalização, para o discriminador
+    https://openaccess.thecvf.com/content_cvpr_2016/papers/He_Deep_Residual_Learning_CVPR_2016_paper.pdf
+    '''
+
+    x = input_tensor
+    skip = input_tensor
+
+    # Primeira convolução (kernel = 3, 3)
+    x = tf.keras.layers.Conv2D(filters=filters, kernel_size=(3, 3), padding='same', kernel_constraint=constraint)(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+
+    # Segunda convolução (kernel = 3, 3)
+    x = tf.keras.layers.Conv2D(filters=filters, kernel_size=(3, 3), padding='same', kernel_constraint=constraint)(x)
+
+    # Concatenação
+    x = tf.keras.layers.Add()([x, skip])
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+
+    return x
+
+
 # -- Simple Decoder
 
 
@@ -295,6 +319,7 @@ def simple_upsample_block(x, filters, scale=2, kernel_size=(3, 3), interpolation
     x = tf.keras.layers.ReLU()(x)
 
     return x
+
 
 # %% GERADORES
 
@@ -859,6 +884,66 @@ def progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, constrained=False, output_ty
 
     return tf.keras.Model(inputs=[inp, tar], outputs=x)
 
+
+def residual_discriminator(IMG_SIZE, OUTPUT_CHANNELS, num_residual_blocks=6, constrained=False):
+
+    '''
+    Adaptado do GERADOR utilizado nos papers Pix2Pix e CycleGAN
+    Modificado para funcionar como um discriminador condicional
+    '''
+
+    # Restrições para o discriminador (usado na WGAN original)
+    constraint = ClipConstraint(0.01)
+    if constrained is False:
+        constraint = None
+
+    # Inicializa a rede e os inputs
+    inp = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS], name='input_image')
+    tar = tf.keras.layers.Input(shape=[IMG_SIZE, IMG_SIZE, OUTPUT_CHANNELS], name='target_image')
+    x = tf.keras.layers.concatenate([inp, tar])
+
+    # Primeiras camadas (pré blocos residuais)
+    x = tf.keras.layers.ZeroPadding2D([[3, 3], [3, 3]])(x)
+    x = tf.keras.layers.Conv2D(filters=64, kernel_size=(7, 7), strides=(1, 1), padding="valid", kernel_initializer=initializer, kernel_constraint=constraint, use_bias=True)(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+
+    # --
+    x = tf.keras.layers.Conv2D(filters=128, kernel_size=(3, 3), strides=(2, 2), padding="valid", kernel_initializer=initializer, kernel_constraint=constraint, use_bias=True)(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+
+    # --
+    x = tf.keras.layers.Conv2D(filters=256, kernel_size=(3, 3), strides=(2, 2), padding="valid", kernel_initializer=initializer, kernel_constraint=constraint, use_bias=True)(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+
+    # Blocos Residuais
+    for i in range(num_residual_blocks):
+        x = residual_disc_block(x, 256, constraint=constraint)
+
+    # --
+    x = tf.keras.layers.Conv2D(filters=256, kernel_size=(3, 3), strides=(2, 2), padding="valid", kernel_initializer=initializer, kernel_constraint=constraint, use_bias=True)(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+
+    # --
+    x = tf.keras.layers.Conv2D(filters=256, kernel_size=(3, 3), strides=(2, 2), padding="valid", kernel_initializer=initializer, kernel_constraint=constraint, use_bias=True)(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+
+    # --
+    x = tf.keras.layers.Conv2D(filters=256, kernel_size=(3, 3), strides=(2, 2), padding="same", kernel_initializer=initializer, kernel_constraint=constraint, use_bias=True)(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+
+    # Final - 4 para 1
+    x = tf.keras.layers.Conv2D(512, (3, 3), strides=1, kernel_initializer=initializer, kernel_constraint=constraint, padding='same')(x)  # (bs, 512, 4, 4)
+    x = tf.keras.layers.LeakyReLU()(x)
+    x = tf.keras.layers.Conv2D(512, (4, 4), strides=1, kernel_initializer=initializer, kernel_constraint=constraint)(x)  # (bs, 512, 1, 1)
+    x = tf.keras.layers.LeakyReLU()(x)
+
+    # Finaliza com uma Fully Connected
+    x = tf.keras.layers.Flatten()(x)
+    x = tf.keras.layers.Dense(1)(x)
+
+    return tf.keras.Model(inputs=[inp, tar], outputs=x)
+
+
 # %% TESTA
 
 
@@ -870,7 +955,7 @@ if __name__ == "__main__":
     NORM_TYPE = 'instancenorm'
     for IMG_SIZE in [256, 128]:
         print(f"\n---- IMG_SIZE = {IMG_SIZE}")
-        print("Geradores:")
+        print("\nGeradores:")
         print("Pix2Pix                                  ", pix2pix_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE).output.shape)
         print("U-Net                                    ", unet_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE).output.shape)
         print("CycleGAN (residual) generator            ", residual_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE, create_latent_vector=False).output.shape)
@@ -881,16 +966,9 @@ if __name__ == "__main__":
         print("Simple Decoder                           ", simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE).output.shape)
         print("Simple Decoder Disentangled              ", simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE, disentanglement='normal').output.shape)
         print("Simple Decoder Smooth Disentangle        ", simple_decoder_generator(IMG_SIZE, OUTPUT_CHANNELS, NORM_TYPE, disentanglement='smooth').output.shape)
-        print("Discriminadores:")
+        print("\nDiscriminadores:")
         print("PatchGAN                                 ", patchgan_discriminator(IMG_SIZE, OUTPUT_CHANNELS).output.shape)
         print("ProGAN (output_type = unit)              ", progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, output_type='unit').output.shape)
         print("ProGAN (output_type = patchgan)          ", progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, output_type='patchgan').output.shape)
-
-    """
-    disc_patchgan = patchgan_discriminator(IMG_SIZE, OUTPUT_CHANNELS)
-    disc_progan_unit = progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, output_type='unit')
-    disc_progan_patchgan = progan_discriminator(IMG_SIZE, OUTPUT_CHANNELS, output_type='patchgan')
-    disc_patchgan.save("disc_patchgan.h5")
-    disc_progan_unit.save("disc_progan_unit.h5")
-    disc_progan_patchgan.save("disc_progan_patchgan.h5")
-    """
+        print("Residual                                 ", residual_discriminator(IMG_SIZE, OUTPUT_CHANNELS).output.shape)
+        print("")

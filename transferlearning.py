@@ -18,7 +18,7 @@ from tensorflow.keras.models import Model, load_model
 
 # Módulos próprios
 import utils
-import networks as net
+import networks_general as net
 
 # Modo de inicialização dos pesos
 initializer = tf.random_normal_initializer(0., 0.02)

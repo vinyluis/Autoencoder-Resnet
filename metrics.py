@@ -121,7 +121,7 @@ def tf_sqrtm(tensor):
 # Inception Score
 def get_inception_score(image):
     '''
-    Calcula o Inception Score (IS) para uma única imagem.
+    Calcula o Inception Score (IS) para um único batch de imagens.
     Baseado em: https://machinelearningmastery.com/how-to-implement-the-inception-score-from-scratch-for-evaluating-generated-images/
     '''
     # Epsilon para evitar problemas no cálculo da divergência KL

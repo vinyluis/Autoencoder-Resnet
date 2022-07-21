@@ -37,8 +37,9 @@ print("")
 import losses
 import utils
 import metrics
-import networks as net
+import networks_general as net
 import transferlearning as transfer
+import networks_resnet as rn
 
 # --- Weights & Biases
 import wandb
@@ -67,11 +68,11 @@ config.USE_RANDOM_JITTER = False
 
 # Parâmetros de rede
 config.NORM_TYPE = "instancenorm"  # "batchnorm", "instancenorm", "pixelnorm"
-config.LAMBDA = 900  # Efeito da Loss L1. Default = 100.
+config.LAMBDA = 100  # Efeito da Loss L1. Default = 100.
 config.LAMBDA_DISC = 1  # Ajuste de escala da loss do dicriminador
 config.LAMBDA_GP = 10  # Intensidade do Gradient Penalty da WGAN-GP
 config.NUM_RESIDUAL_BLOCKS = 6  # Número de blocos residuais dos geradores residuais
-config.DISENTANGLEMENT = 'smooth'  # 'none', 'normal', 'smooth'
+config.DISENTANGLEMENT = 'normal'  # 'none', 'normal', 'smooth'
 # config.ADAM_BETA_1 e config.FIRST_EPOCH são definidos em código
 
 # Parâmetros de treinamento
@@ -79,7 +80,7 @@ config.BATCH_SIZE = 6
 config.BUFFER_SIZE = 100
 config.LEARNING_RATE_G = 1e-5
 config.LEARNING_RATE_D = 1e-5
-config.EPOCHS = 25
+config.EPOCHS = 10
 
 # Parâmetros das métricas
 config.EVALUATE_IS = True
@@ -115,17 +116,17 @@ SHUTDOWN_AFTER_FINISH = False  # Controla se o PC será desligado quando o códi
 # %% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp_group = "R11"
-config.exp = "R11A"
+config.exp_group = "R13"
+config.exp = "R13B"
 
 if config.exp != "":
     print(f"Experimento {config.exp}")
 
 # Modelo do gerador. Possíveis = 'pix2pix', 'unet', 'residual', 'residual_vetor',
 #                                'full_residual', 'simple_decoder', 'transfer'
-config.gen_model = 'full_residual'
+config.gen_model = 'resnet_adaptado'
 
-# Modelo do discriminador. Possíveis = 'patchgan', 'progan', 'progan_adapted'
+# Modelo do discriminador. Possíveis = 'patchgan', 'progan', 'progan_adapted', 'residual'
 config.disc_model = 'progan'
 
 # Tipo de loss. Possíveis = 'patchganloss', 'wgan', 'wgan-gp', 'l1', 'l2'
@@ -171,7 +172,7 @@ if not (config.NORM_TYPE == 'batchnorm' or config.NORM_TYPE == 'instancenorm' or
 # Valida o tipo de disentanglement
 if not (config.DISENTANGLEMENT == 'smooth' or config.DISENTANGLEMENT == 'normal'
         or config.DISENTANGLEMENT is None or config.DISENTANGLEMENT == 'none'):
-    raise BaseException("Selecione um tipo válido de desemaranhamento")
+    raise BaseException("Selecione um tipo válido de desemaranhamento.")
 
 
 # %% PREPARA AS PASTAS
@@ -244,7 +245,7 @@ val_folder = dataset_folder + 'val'
 
 # %% PREPARAÇÃO DOS INPUTS
 
-print("Carregando o dataset...")
+print("Carregando os datasets...")
 
 # Dataset de treinamento
 train_dataset = tf.data.Dataset.list_files(train_folder + dataset_filter_string)
@@ -341,10 +342,10 @@ def train_step(generator, discriminator, input_image, target):
             print("Erro de modelo. Selecione uma Loss válida")
 
     generator_gradients = gen_tape.gradient(gen_loss, generator.trainable_variables)
-    discriminator_gradients = disc_tape.gradient(disc_loss, disc.trainable_variables)
+    discriminator_gradients = disc_tape.gradient(disc_loss, discriminator.trainable_variables)
 
     generator_optimizer.apply_gradients(zip(generator_gradients, generator.trainable_variables))
-    discriminator_optimizer.apply_gradients(zip(discriminator_gradients, disc.trainable_variables))
+    discriminator_optimizer.apply_gradients(zip(discriminator_gradients, discriminator.trainable_variables))
 
     # Cria um dicionário das losses
     loss_dict = {
@@ -616,6 +617,8 @@ elif config.gen_model == 'transfer':
     generator = transfer.transfer_model(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, config.transfer_generator_path, config.transfer_generator_filename,
                                         config.transfer_upsample_type, config.transfer_encoder_last_layer, config.transfer_decoder_first_layer, config.transfer_trainable,
                                         config.DISENTANGLEMENT)
+elif config.gen_model == 'resnet_adaptado':
+    generator = rn.resnet_adapted_generator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE, disentanglement=config.DISENTANGLEMENT)
 else:
     raise utils.GeneratorError(config.gen_model)
 
@@ -627,6 +630,10 @@ if config.ADVERSARIAL:
         disc = net.progan_discriminator(config.IMG_SIZE, config.OUTPUT_CHANNELS, constrained=constrained, output_type='patchgan')
     elif config.disc_model == 'progan':
         disc = net.progan_discriminator(config.IMG_SIZE, config.OUTPUT_CHANNELS, constrained=constrained, output_type='unit')
+    elif config.disc_model == 'residual':
+        disc = net.residual_discriminator(config.IMG_SIZE, config.OUTPUT_CHANNELS, constrained=constrained)
+    elif config.disc_model == 'resnet_adaptado':
+        disc = rn.resnet_adapted_discriminator(config.IMG_SIZE, config.OUTPUT_CHANNELS, config.NORM_TYPE)
     else:
         raise utils.DiscriminatorError(config.disc_model)
 else:

@@ -4,8 +4,6 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import wandb
-from datetime import datetime
-from datetime import timedelta
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Silencia o TF (https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information)
 import tensorflow as tf
@@ -28,46 +26,6 @@ def dict_tensor_to_numpy(tensor_dict):
         except Exception:
             numpy_dict[k] = tensor_dict[k]
     return numpy_dict
-
-
-def get_time_string(mode="complete", days_offset=0):
-    """Prepara a string de data e hora conforme necessário."""
-
-    # Horário atual
-    now = datetime.now()
-    now = now + timedelta(days=days_offset)  # adiciona um offset de x dias
-    yr = str(now.year)
-    mt = str(now.month)
-    dy = str(now.day)
-
-    if(len(mt) == 1):
-        mt = "0" + mt
-
-    if(len(dy) == 1):
-        dy = "0" + dy
-
-    m = str(now.minute)
-    h = str(now.hour)
-    s = str(now.second)
-
-    if(len(m) == 1):
-        m = "0" + m
-    if(len(h) == 1):
-        h = "0" + h
-    if(len(s) == 1):
-        s = "0" + s
-
-    if(mode == "complete"):
-        st = f"{dy}-{mt}-{yr} {h}:{m}:{s}"
-        return st
-
-    if(mode == "normal"):
-        st = f"{dy}-{mt}-{yr}"
-        return st
-
-    if(mode == "file"):
-        st = yr + mt + dy
-        return st
 
 
 def generate_images(generator, img_input, save_destination=None, filename=None, QUIET_PLOT=True):
