@@ -72,7 +72,7 @@ config.LAMBDA = 100  # Efeito da Loss L1. Default = 100.
 config.LAMBDA_DISC = 1  # Ajuste de escala da loss do dicriminador
 config.LAMBDA_GP = 10  # Intensidade do Gradient Penalty da WGAN-GP
 config.NUM_RESIDUAL_BLOCKS = 6  # Número de blocos residuais dos geradores residuais
-config.DISENTANGLEMENT = 'normal'  # 'none', 'normal', 'smooth'
+config.DISENTANGLEMENT = 'smooth'  # 'none', 'normal', 'smooth'
 # config.ADAM_BETA_1 e config.FIRST_EPOCH são definidos em código
 
 # Parâmetros de treinamento
@@ -80,7 +80,7 @@ config.BATCH_SIZE = 6
 config.BUFFER_SIZE = 100
 config.LEARNING_RATE_G = 1e-5
 config.LEARNING_RATE_D = 1e-5
-config.EPOCHS = 10
+config.EPOCHS = 25
 
 # Parâmetros das métricas
 config.EVALUATE_IS = True
@@ -116,15 +116,15 @@ SHUTDOWN_AFTER_FINISH = False  # Controla se o PC será desligado quando o códi
 # %% CONTROLE DA ARQUITETURA
 
 # Código do experimento (se não houver, deixar "")
-config.exp_group = "R13"
-config.exp = "R13B"
+config.exp_group = "R11"
+config.exp = "R11C"
 
 if config.exp != "":
     print(f"Experimento {config.exp}")
 
 # Modelo do gerador. Possíveis = 'pix2pix', 'unet', 'residual', 'residual_vetor',
 #                                'full_residual', 'simple_decoder', 'transfer'
-config.gen_model = 'resnet_adaptado'
+config.gen_model = 'full_residual'
 
 # Modelo do discriminador. Possíveis = 'patchgan', 'progan', 'progan_adapted', 'residual'
 config.disc_model = 'progan'
@@ -137,7 +137,7 @@ if config.gen_model == 'transfer':
     config.transfer_generator_path = base_root + "Experimentos/EXP_R04A_gen_residual_disc_progan/model/"
     config.transfer_generator_filename = "generator.h5"
     config.transfer_upsample_type = 'conv'  # 'none', 'simple' ou 'conv'
-    config.transfer_trainable = True
+    config.transfer_trainable = False
     config.transfer_encoder_last_layer = 'leaky_re_lu_14'
     config.transfer_decoder_first_layer = 'conv2d_transpose'
 
